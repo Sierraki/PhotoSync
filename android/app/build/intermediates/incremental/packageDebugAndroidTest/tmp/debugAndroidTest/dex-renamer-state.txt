@@ -1,4 +1,0 @@
-#Wed Mar 04 03:19:25 CST 2026
-base.0=S\:\\CodeDB\\Solutions\\PhotoSync\\android\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\0\\classes.dex
-path.0=0/classes.dex
-renamed.0=classes.dex

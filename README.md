@@ -1,6 +1,5 @@
 # PhotoSync
 
-[See English version here](README.en.md)
 
 一款跨平台的手机相册同步工具。支持通过 **局域网 (Wi-Fi)** 或 **ADB (有线)** 连接，将手机端的照片与视频高速同步至电脑端。
 

@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.photosync.app-mergeDebugResources-41:/layout/activity_main.xml",
+        "source": "com.photosync.app-main-44:/layout/activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\Sierra\\.gradle\\daemon\\8.5\\com.photosync.app-mergeDebugResources-41:\\layout\\activity_main.xml",
+        "source": "C:\\Users\\Sierra\\.gradle\\daemon\\8.5\\com.photosync.app-main-44:\\layout\\activity_main.xml"
+    }
+]

@@ -1,0 +1,33 @@
+R_DEF: Internal format may change without notice
+local
+drawable dot_gray
+drawable dot_green
+drawable dot_red
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+id btnScanQr
+id btnStop
+id btnSync
+id btnTestConnection
+id btnTestUsbConnection
+id cardServer
+id etServerIp
+id layoutUsbConfig
+id layoutWifiConfig
+id progressSync
+id rbUsb
+id rbWifi
+id rgConnectionMode
+id tvConnectionStatus
+id tvLog
+id tvPendingPhotos
+id tvSyncProgress
+id tvSyncedPhotos
+id tvTotalPhotos
+id tvUsbHint
+id viewStatusDot
+layout activity_main
+mipmap ic_launcher
+string app_name
+style Theme.PhotoSync
+xml network_security_config

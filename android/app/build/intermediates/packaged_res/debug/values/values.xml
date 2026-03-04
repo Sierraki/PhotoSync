@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PhotoSync</string>
+    <style name="Theme.PhotoSync" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">#2563EB</item>
+        <item name="colorPrimaryContainer">#DBEAFE</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#7C3AED</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#1A1A2E</item>
+        <item name="android:statusBarColor">#2563EB</item>
+    </style>
+</resources>

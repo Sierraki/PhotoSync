@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhotoSync - 相册同步</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>PhotoSync</h1>
+            <p class="subtitle">手机相册同步管理</p>
+            <p class="powered-by">
+                Powered by <span>Sierra</span>
+                <a href="https://github.com/Sierraki" target="_blank" class="github-link">
+                    <svg class="github-icon" viewBox="0 0 24 24" width="16" height="16">
+                        <path fill="currentColor"
+                            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                    </svg>
+                </a>
+            </p>
+        </header>
+
+        <!-- 连接信息：地址 + 二维码 -->
+        <section class="panel connect-panel">
+            <h2>连接手机</h2>
+            <div class="connect-grid">
+                <div class="connect-left">
+                    <p class="desc">在手机 App 中输入以下地址，或扫描右侧二维码：</p>
+                    <div class="address-box" id="address-box" onclick="copyAddress()" title="点击复制">
+                        <span id="server-url">加载中...</span>
+                        <span class="copy-hint">点击复制</span>
+                    </div>
+                    <p class="copy-toast" id="copy-toast">已复制到剪贴板</p>
+                    <div id="alt-urls" style="margin-top:8px;display:none;">
+                        <p class="hint" style="margin-bottom:4px;">如果连不上，试试其他地址：</p>
+                        <div id="alt-urls-list" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+                    </div>
+                    <div class="status-grid" style="margin-top:16px;">
+                        <div class="status-item">
+                            <span class="label">已同步</span>
+                            <span class="value" id="total-synced">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">最后同步</span>
+                            <span class="value" id="last-sync">从未</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="connect-right">
+                    <img id="qrcode-img" src="/api/qrcode" alt="扫码连接" class="qrcode">
+                    <p class="hint">手机扫码连接</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 设置面板 -->
+        <section class="panel settings-panel">
+            <h2>设置</h2>
+            <div class="setting-row">
+                <label>照片存储路径</label>
+                <div class="input-group">
+                    <input type="text" id="storage-path-input" placeholder="输入或选择文件夹路径" style="width: 300px;">
+                    <button class="btn" onclick="browseFolder()">浏览...</button>
+                    <button class="btn btn-secondary" onclick="savePath()">保存</button>
+                </div>
+            </div>
+            <div class="setting-row">
+                <label>ADB 路径</label>
+                <div class="input-group">
+                    <input type="text" id="adb-path-input" placeholder="platform-tools 目录路径" style="width: 300px;">
+                    <button class="btn" onclick="browseAdbFolder()">浏览...</button>
+                    <button class="btn btn-secondary" onclick="saveAdbPath()">保存</button>
+                    <span id="adb-status" class="hint"></span>
+                </div>
+            </div>
+            <div class="setting-row">
+                <label>USB 连接</label>
+                <div class="input-group">
+                    <button class="btn" onclick="setupAdbReverse()">设置端口转发</button>
+                    <span id="adb-reverse-status" class="hint"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 同步状态 -->
+        <section class="panel wifi-panel">
+            <h2>同步状态</h2>
+            <div class="sync-stats-row">
+                <div class="stat-item"><span class="stat-label">电脑端照片</span><span class="stat-value"
+                        id="sync-pc-total">0</span></div>
+                <div class="stat-item"><span class="stat-label">已扫描</span><span class="stat-value"
+                        id="sync-scanned">-</span></div>
+                <div class="stat-item"><span class="stat-label">待同步</span><span class="stat-value"
+                        id="sync-need-sync">-</span></div>
+                <div class="stat-item"><span class="stat-label">已同步</span><span class="stat-value"
+                        id="sync-synced">-</span></div>
+                <div class="stat-item"><span class="stat-label">速度</span><span class="stat-value"
+                        id="sync-speed">--</span></div>
+            </div>
+            <div class="sync-status-row">
+                <span class="dot gray" id="sync-dot"></span>
+                <span id="sync-status-text">等待同步...</span>
+            </div>
+            <div id="sync-progress-area" style="display:none;">
+                <div class="progress-bar-wrap">
+                    <div class="progress-bar" id="sync-progress-bar" style="width:0%"></div>
+                </div>
+                <p class="sync-info" id="sync-progress-text">准备中...</p>
+            </div>
+        </section>
+
+        <!-- 照片列表 -->
+        <section class="panel photos-panel">
+            <h2>已同步照片 <span class="badge" id="photo-count">0</span></h2>
+            <div class="photo-grid" id="photo-grid">
+                <div class="empty-state">
+                    <p>暂无同步的照片</p>
+                    <p class="hint">在手机上打开 PhotoSync App 开始同步</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>

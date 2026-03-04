@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F0F2F5">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 标题 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="PhotoSync"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#2563EB"
+            android:gravity="center"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="手机相册同步到电脑"
+            android:textSize="14sp"
+            android:textColor="#6B7280"
+            android:gravity="center"
+            android:layout_marginBottom="20dp" />
+
+        <!-- 连接方式选择 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="连接方式"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#374151"
+                    android:layout_marginBottom="12dp" />
+
+                <RadioGroup
+                    android:id="@+id/rgConnectionMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.radiobutton.MaterialRadioButton
+                        android:id="@+id/rbWifi"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="局域网 (WiFi)"
+                        android:checked="true" />
+
+                    <com.google.android.material.radiobutton.MaterialRadioButton
+                        android:id="@+id/rbUsb"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="USB (ADB)" />
+                </RadioGroup>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 服务器地址 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardServer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="服务器地址"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#374151"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:id="@+id/layoutWifiConfig"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="电脑 IP 地址"
+                        app:boxCornerRadiusTopStart="8dp"
+                        app:boxCornerRadiusTopEnd="8dp"
+                        app:boxCornerRadiusBottomStart="8dp"
+                        app:boxCornerRadiusBottomEnd="8dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etServerIp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="例如: 192.168.1.100"
+                            android:inputType="text"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="8dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnScanQr"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="扫码连接"
+                            android:textSize="14sp"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            app:icon="@android:drawable/ic_menu_camera"
+                            app:cornerRadius="8dp"
+                            android:layout_marginEnd="8dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTestConnection"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="测试连接"
+                            android:textSize="14sp"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            app:cornerRadius="8dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvUsbHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="USB 模式将通过 ADB 端口转发连接到 localhost:8920"
+                    android:textSize="13sp"
+                    android:textColor="#6B7280"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/layoutUsbConfig"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="请确保：\n1. 手机已通过 USB 连接电脑\n2. 已开启 USB 调试\n3. 电脑端服务器正在运行\n4. 已执行 adb forward tcp:8920 tcp:8920"
+                        android:textSize="13sp"
+                        android:textColor="#6B7280"
+                        android:lineSpacingExtra="4dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTestUsbConnection"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="测试连接"
+                        android:textSize="14sp"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        app:cornerRadius="8dp"
+                        android:layout_marginTop="12dp" />
+                </LinearLayout>
+
+                <!-- 连接状态 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="12dp">
+
+                    <View
+                        android:id="@+id/viewStatusDot"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:background="@drawable/dot_gray" />
+
+                    <TextView
+                        android:id="@+id/tvConnectionStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="未连接"
+                        android:textSize="13sp"
+                        android:textColor="#6B7280"
+                        android:layout_marginStart="8dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 同步状态 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="同步状态"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#374151"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="#F8FAFC"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="相册照片"
+                            android:textSize="12sp"
+                            android:textColor="#9CA3AF" />
+
+                        <TextView
+                            android:id="@+id/tvTotalPhotos"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="#1F2937" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="match_parent" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="#F8FAFC"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="待同步"
+                            android:textSize="12sp"
+                            android:textColor="#9CA3AF" />
+
+                        <TextView
+                            android:id="@+id/tvPendingPhotos"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="#2563EB" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="match_parent" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="#F8FAFC"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="已同步"
+                            android:textSize="12sp"
+                            android:textColor="#9CA3AF" />
+
+                        <TextView
+                            android:id="@+id/tvSyncedPhotos"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="#22C55E" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 进度条 -->
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/progressSync"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    app:trackCornerRadius="4dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvSyncProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="点击下方按钮开始同步"
+                    android:textSize="13sp"
+                    android:textColor="#6B7280"
+                    android:gravity="center" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 操作按钮 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSync"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="开始同步"
+            android:textSize="16sp"
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="停止同步"
+            android:textSize="14sp"
+            android:visibility="gone"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            app:cornerRadius="12dp" />
+
+        <!-- 日志 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="同步日志"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#374151"
+                    android:layout_marginBottom="8dp" />
+
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="150dp">
+
+                    <TextView
+                        android:id="@+id/tvLog"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="等待操作..."
+                        android:textSize="12sp"
+                        android:textColor="#6B7280"
+                        android:fontFamily="monospace"
+                        android:background="#F8FAFC"
+                        android:padding="8dp" />
+                </ScrollView>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+</ScrollView>

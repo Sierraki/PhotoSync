@@ -909,6 +909,19 @@ async def get_scan_status():
 
 # ─── 统计计数器 ────────────────────────────────────────────
 check_stats = {"total": 0, "synced": 0, "not_synced": 0}
+check_last_print = 0  # 上次打印时的计数
+upload_stats = {"total": 0, "skipped": 0, "success": 0}
+upload_last_print = 0  # 上次打印时的计数
+
+
+def reset_stats():
+    """重置统计计数器"""
+    global check_stats, check_last_print, upload_stats, upload_last_print
+    check_stats = {"total": 0, "synced": 0, "not_synced": 0}
+    check_last_print = 0
+    upload_stats = {"total": 0, "skipped": 0, "success": 0}
+    upload_last_print = 0
+    print()  # 换行，开始新的同步
 
 
 @app.post("/api/check_album")
@@ -917,7 +930,7 @@ async def check_album(items: list[dict]):
     输入: [{"album": "Camera", "md5": "xxx"}, ...]
     输出: {"album|md5": true/false, ...}
     """
-    global check_stats
+    global check_stats, check_last_print
     if not items:
         return {}
 
@@ -964,12 +977,13 @@ async def check_album(items: list[dict]):
     check_stats["synced"] += synced_count
     check_stats["not_synced"] += not_synced_count
 
-    if not_synced_count > 0:
+    # 每100张输出一次进度（换行打印）
+    total = check_stats["total"]
+    if total - check_last_print >= 100 or (total > 0 and check_last_print == 0):
         print(
-            f"[相册检查] 总计: {
-                check_stats['total']}, 已同步: {
-                check_stats['synced']}, 需同步: {
-                check_stats['not_synced']}")
+            f"[相册检查] 总计: {total}, 已同步: {check_stats['synced']}, 需同步: {check_stats['not_synced']}"
+        )
+        check_last_print = total
 
     return results
 
@@ -1059,6 +1073,9 @@ async def wifi_sync_start(
     need_sync: int = Form(0),
 ):
     """手机端开始同步时调用，报告统计信息"""
+    # 重置统计计数器
+    reset_stats()
+
     pc_total = db.get_count()
 
     wifi_sync_status.update({
@@ -1132,6 +1149,7 @@ async def upload_photo(
     taken_date: str = Form(""),
     album: str = Form(""),
 ):
+    global upload_stats, upload_last_print
     try:
         photos_dir = get_photos_dir()
 
@@ -1150,7 +1168,9 @@ async def upload_photo(
 
         # 检查该相册内是否已有该MD5（相册内去重）
         if is_in_album_synced(sub_dir, final_hash):
-            print(f"[上传] 跳过（相册内已存在）: {sub_dir}/{original_name}")
+            # 统计跳过
+            upload_stats["total"] += 1
+            upload_stats["skipped"] += 1
             return {"status": "skipped", "message": "相册内已存在相同文件"}
 
         # 确定保存路径
@@ -1169,13 +1189,23 @@ async def upload_photo(
             f.write(content)
 
         add_to_album_index(sub_dir, final_hash, filename, len(content))
-        print(f"[上传] 成功: {sub_dir}/{filename}")
+
+        # 统计成功
+        upload_stats["total"] += 1
+        upload_stats["success"] += 1
+
+        # 每100张输出一次进度（换行打印）
+        total = upload_stats["total"]
+        if total - upload_last_print >= 100 or (total > 0 and upload_last_print == 0):
+            print(
+                f"[上传统计] 总计: {total}, 成功: {upload_stats['success']}, 跳过: {upload_stats['skipped']}"
+            )
+            upload_last_print = total
 
         return {"status": "ok", "message": "上传成功", "path": f"{sub_dir}/{filename}"}
     except ConnectionResetError:
         return {"status": "error", "message": "连接被重置"}
     except Exception as e:
-        return {"status": "error", "message": f"上传失败: {e}"}
         return {"status": "error", "message": f"上传失败: {e}"}
 
 

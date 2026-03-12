@@ -3,6 +3,7 @@ PhotoSync PC Server
 局域网/USB 手机相册同步到电脑的接收端服务器
 使用本地数据库进行快速索引，同步时与实际文件交叉验证
 """
+import time
 import json
 import os
 import io
@@ -47,7 +48,7 @@ class Config:
         self.path = path
         self.data = {
             "storage_path": str(DEFAULT_STORAGE),
-            "adb_path": "",
+            "connection_type": "wifi",  # "wifi" 或 "adb"
         }
         self.load()
 
@@ -67,12 +68,11 @@ class Config:
 
     @property
     def adb_executable(self) -> str:
-        adb_dir = self.data.get("adb_path", "")
-        if adb_dir:
-            for name in ("adb.exe", "adb"):
-                p = Path(adb_dir) / name
-                if p.exists():
-                    return str(p)
+        # 使用内置 ADB
+        builtin_adb = Path(__file__).parent.parent / "ADB" / "adb.exe"
+        if builtin_adb.exists():
+            return str(builtin_adb)
+        # 备用：尝试系统 PATH 中的 adb
         return "adb"
 
 
@@ -228,6 +228,8 @@ def _verify_and_clean_db():
     if removed > 0:
         db.save()
         print(f"[数据库] 清理了 {removed} 个不存在的文件记录")
+
+    return removed
 
 
 def _scan_local_files():
@@ -515,7 +517,8 @@ adb_sync_status = {
     "current": "",
     "device": "",
     "start_time": None,
-    "speed": 0.0,
+    "speed": 0.0,      # MB/s
+    "bytes_sent": 0,   # 已传输字节数
     "eta": 0,
     "log": [],
 }
@@ -524,6 +527,9 @@ adb_sync_status = {
 wifi_sync_status = {
     "running": False,
     "phase": "",
+    "connected": False,        # 手机是否已连接
+    "connection_type": "",    # "wifi" 或 "adb"
+    "pc_request_sync": False,  # PC 端请求手机开始同步
     "pc_total": 0,
     "device": "",
     "phone_total": 0,
@@ -533,9 +539,13 @@ wifi_sync_status = {
     "failed": 0,
     "current": "",
     "start_time": None,
-    "speed": 0.0,
+    "speed": 0.0,          # MB/s
+    "bytes_sent": 0,       # 已传输字节数
     "eta": 0,
 }
+
+# 本次同步的照片列表（最多保留 50 条）
+recent_synced_photos = []
 
 PHONE_PHOTO_DIRS = [
     "/sdcard/DCIM/Camera",
@@ -607,6 +617,7 @@ def _run_adb_sync(serial: str, device_name: str):
         "device": device_name,
         "start_time": None,
         "speed": 0.0,
+        "bytes_sent": 0,
         "eta": 0,
         "log": [],
     })
@@ -688,6 +699,7 @@ def _run_adb_sync(serial: str, device_name: str):
     # ─── 阶段3: 同步文件 ───
     adb_sync_status["phase"] = "syncing"
     adb_sync_status["start_time"] = datetime.now().timestamp()
+    adb_sync_status["bytes_sent"] = 0
     _adb_sync_log(f"开始同步 {len(need_sync_files)} 个文件...")
 
     for remote_path, album in need_sync_files:
@@ -721,6 +733,9 @@ def _run_adb_sync(serial: str, device_name: str):
                 counter += 1
 
         if _adb_pull_file(serial, remote_path, str(save_path)):
+            # 获取文件大小
+            file_size = save_path.stat().st_size if save_path.exists() else 0
+            adb_sync_status["bytes_sent"] += file_size
             add_to_album_index(album, md5, save_path.name)
             adb_sync_status["synced"] += 1
             adb_sync_status["pc_total"] = db.get_count()
@@ -729,16 +744,21 @@ def _run_adb_sync(serial: str, device_name: str):
             adb_sync_status["failed"] += 1
             _adb_sync_log(f"失败: {filename}")
 
-        # 计算速度和ETA
+        # 计算速度和ETA (MB/s)
         start_time = adb_sync_status.get("start_time")
-        synced = adb_sync_status["synced"]
-        if start_time and synced > 0:
+        bytes_sent = adb_sync_status["bytes_sent"]
+        if start_time and bytes_sent > 0:
             elapsed = datetime.now().timestamp() - start_time
             if elapsed > 0:
-                speed = synced / elapsed
-                adb_sync_status["speed"] = round(speed, 2)
-                remaining = len(need_sync_files) - synced - adb_sync_status["failed"]
-                adb_sync_status["eta"] = int(remaining / speed) if speed > 0 else 0
+                speed_mb = (bytes_sent / 1024 / 1024) / elapsed
+                adb_sync_status["speed"] = round(speed_mb, 2)
+                remaining = len(need_sync_files) - \
+                    adb_sync_status["synced"] - adb_sync_status["failed"]
+                if speed_mb > 0:
+                    avg_bytes = bytes_sent / \
+                        adb_sync_status["synced"] if adb_sync_status["synced"] > 0 else 0
+                    remaining_bytes = avg_bytes * remaining
+                    adb_sync_status["eta"] = int(remaining_bytes / 1024 / 1024 / speed_mb)
 
     db.set_last_scan(datetime.now().isoformat())
     adb_sync_status["phase"] = "done"
@@ -813,7 +833,7 @@ async def get_status():
         "adb_available": adb_available,
         "adb_devices": adb_devices,
         "all_adb_devices": all_adb_devices,
-        "adb_path": config.data.get("adb_path", ""),
+        "connection_type": config.data.get("connection_type", "wifi"),
         "total_synced": total_synced,
         "storage_path": str(get_photos_dir().resolve()),
     }
@@ -833,16 +853,83 @@ async def get_qrcode(url: str = ""):
 
 
 @app.post("/api/settings/storage")
-async def set_storage_path(path: str = Form(...)):
+async def set_storage_path(path: str = Form("")):
     try:
-        new_path = Path(path)
-        new_path.mkdir(parents=True, exist_ok=True)
-        resolved = str(new_path.resolve())
-        config.data["storage_path"] = resolved
+        if path:
+            new_path = Path(path)
+            new_path.mkdir(parents=True, exist_ok=True)
+            resolved = str(new_path.resolve())
+            config.data["storage_path"] = resolved
+        else:
+            # 空路径使用默认
+            config.data["storage_path"] = str(DEFAULT_STORAGE)
         config.save()
-        return {"status": "ok", "message": "存储路径已更新", "path": resolved}
+        return {"status": "ok", "message": "存储路径已更新", "path": config.data["storage_path"]}
     except Exception as e:
         return {"status": "error", "message": f"设置失败: {e}"}
+
+
+@app.post("/api/settings/connection")
+async def set_connection_type(conn_type: str = Form(...)):
+    """设置连接方式：wifi 或 adb"""
+    if conn_type not in ("wifi", "adb"):
+        return {"status": "error", "message": "无效的连接类型"}
+    config.data["connection_type"] = conn_type
+    config.save()
+    return {"status": "ok", "message": f"已切换到 {conn_type.upper()} 连接"}
+
+
+@app.post("/api/phone/register")
+async def phone_register(device: str = Form(""), connection_type: str = Form("wifi")):
+    """手机端注册连接状态"""
+    wifi_sync_status["connected"] = True
+    wifi_sync_status["connection_type"] = connection_type
+    wifi_sync_status["device"] = device or "未知设备"
+    return {"status": "ok", "message": "已注册连接"}
+
+
+@app.post("/api/phone/unregister")
+async def phone_unregister():
+    """手机端断开连接"""
+    wifi_sync_status["connected"] = False
+    wifi_sync_status["connection_type"] = ""
+    wifi_sync_status["device"] = ""
+    return {"status": "ok", "message": "已断开连接"}
+
+
+@app.post("/api/test-connection")
+async def test_connection(conn_type: str = Form(...), device_serial: str = Form("")):
+    """测试连接是否稳定"""
+    if conn_type == "wifi":
+        # WiFi 模式：检查手机是否已连接
+        if wifi_sync_status.get("connected"):
+            return {
+                "status": "ok",
+                "message": f"WiFi 连接正常 ({wifi_sync_status.get('connection_type', 'wifi').upper()})"
+            }
+        else:
+            return {"status": "error", "message": "手机未连接，请在手机端打开 App 连接"}
+
+    elif conn_type == "adb":
+        # ADB 模式：测试设备连接
+        if not check_adb():
+            return {"status": "error", "message": "ADB 不可用"}
+
+        if not device_serial:
+            return {"status": "error", "message": "请先选择设备"}
+
+        try:
+            result = _run_adb("-s", device_serial, "shell", "echo", "ok", timeout=5)
+            if result.returncode == 0 and "ok" in result.stdout:
+                return {"status": "ok", "message": f"ADB 连接正常 ({device_serial})"}
+            else:
+                return {"status": "error", "message": "设备无响应"}
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": "连接超时"}
+        except Exception as e:
+            return {"status": "error", "message": f"连接失败: {e}"}
+
+    return {"status": "error", "message": "未知的连接类型"}
 
 
 @app.post("/api/settings/browse")
@@ -858,23 +945,124 @@ async def browse_folder():
     return {"status": "cancelled", "message": "未选择文件夹"}
 
 
-@app.post("/api/settings/adb_path")
-async def set_adb_path(path: str = Form(...)):
-    try:
-        if path:
-            p = Path(path)
-            if not p.exists():
-                return {"status": "error", "message": f"路径不存在: {path}"}
-        config.data["adb_path"] = path
-        config.save()
-        adb_ok = check_adb()
-        return {
-            "status": "ok",
-            "message": "ADB 路径已更新" + (" (ADB 可用)" if adb_ok else " (ADB 不可用)"),
-            "adb_available": adb_ok,
-        }
-    except Exception as e:
-        return {"status": "error", "message": f"设置失败: {e}"}
+
+# 扫描进度
+scan_progress = {"running": False, "current": "", "total": 0, "scanned": 0}
+
+
+def scan_local_photos():
+    """后台扫描本地照片，与数据库完全同步"""
+    global scan_progress
+    photos_dir = get_photos_dir()
+
+    if not photos_dir.exists():
+        scan_progress["running"] = False
+        return
+
+    # 收集所有图片文件
+    extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".mp4", ".mov", ".avi"}
+    local_files = {}  # md5 -> {album, filename, size, mtime}
+    all_files = []
+
+    for root, _dirs, files in os.walk(str(photos_dir)):
+        for f in files:
+            ext = Path(f).suffix.lower()
+            if ext in extensions:
+                all_files.append(Path(root) / f)
+
+    scan_progress["total"] = len(all_files)
+    scan_progress["scanned"] = 0
+    scan_progress["added"] = 0
+    scan_progress["removed"] = 0
+
+    # 第一步：扫描本地所有文件
+    for file_path in all_files:
+        if not scan_progress["running"]:
+            break
+        try:
+            with open(file_path, "rb") as f:
+                md5 = hashlib.md5(f.read()).hexdigest()
+
+            rel_path = file_path.relative_to(photos_dir)
+            parts = str(rel_path).replace("\\", "/").split("/")
+            album = parts[0] if len(parts) > 1 else "unsorted"
+            filename = "/".join(parts[1:]) if len(parts) > 1 else parts[0]
+
+            local_files[md5] = {
+                "album": album,
+                "filename": filename,
+                "size": file_path.stat().st_size,
+                "mtime": file_path.stat().st_mtime
+            }
+
+            scan_progress["scanned"] += 1
+            scan_progress["current"] = filename
+        except Exception:
+            pass
+
+    # 第二步：与数据库对比，同步差异
+    # 获取数据库中所有 md5
+    db_md5s = set()
+    for album, md5s in list(db.data.get("albums", {}).items()):
+        for md5 in md5s.keys():
+            db_md5s.add(md5)
+
+    local_md5s = set(local_files.keys())
+
+    # 本地有、数据库没有 → 添加
+    added = 0
+    for md5 in local_md5s:
+        if md5 not in db_md5s:
+            info = local_files[md5]
+            db.add_to_album(info["album"], md5, info["filename"], info["size"], info["mtime"])
+            added += 1
+
+    # 本地没有、数据库有 → 删除
+    removed = 0
+    for md5 in db_md5s:
+        if md5 not in local_md5s:
+            # 找到并删除该 md5 所在的相册记录
+            for album in list(db.data.get("albums", {}).keys()):
+                if md5 in db.data["albums"].get(album, {}):
+                    db.remove_from_album(album, md5)
+                    removed += 1
+                    break
+
+    db.save()
+    db.set_last_scan(datetime.now().isoformat())
+
+    scan_progress["added"] = added
+    scan_progress["removed"] = removed
+    scan_progress["running"] = False
+    scan_progress["current"] = f"完成 - 新增: {added}, 删除: {removed}"
+
+
+@app.post("/api/settings/scan-local")
+async def scan_local_photos_api():
+    """扫描本地照片并更新数据库"""
+    global scan_progress
+
+    if scan_progress["running"]:
+        return {"status": "error", "message": "扫描正在进行中"}
+
+    scan_progress["running"] = True
+    scan_progress["current"] = "开始扫描..."
+    scan_progress["total"] = 0
+    scan_progress["scanned"] = 0
+    scan_progress["added"] = 0
+    scan_progress["removed"] = 0
+
+    # 后台执行扫描
+    t = threading.Thread(target=scan_local_photos, daemon=True)
+    t.start()
+
+    return {"status": "ok", "message": "扫描已开始"}
+
+
+@app.get("/api/settings/scan-status")
+async def get_scan_status():
+    """获取扫描状态"""
+    return scan_progress
 
 
 # ─── 本地扫描 API ────────────────────────────────────────
@@ -915,12 +1103,13 @@ upload_last_print = 0  # 上次打印时的计数
 
 
 def reset_stats():
-    """重置统计计数器"""
-    global check_stats, check_last_print, upload_stats, upload_last_print
+    """重置统计计数器和最近同步列表"""
+    global check_stats, check_last_print, upload_stats, upload_last_print, recent_synced_photos
     check_stats = {"total": 0, "synced": 0, "not_synced": 0}
     check_last_print = 0
     upload_stats = {"total": 0, "skipped": 0, "success": 0}
     upload_last_print = 0
+    recent_synced_photos = []  # 清空本次同步的照片列表
     print()  # 换行，开始新的同步
 
 
@@ -1061,6 +1250,7 @@ async def wifi_scan_progress(
         "current": f"扫描中 {scanned}/{total}...",
         "start_time": None,
         "speed": 0.0,
+        "bytes_sent": 0,
         "eta": 0,
     })
     return {"status": "ok"}
@@ -1071,6 +1261,7 @@ async def wifi_sync_start(
     device: str = Form(""),
     phone_total: int = Form(0),
     need_sync: int = Form(0),
+    connection_type: str = Form("wifi"),
 ):
     """手机端开始同步时调用，报告统计信息"""
     # 重置统计计数器
@@ -1078,6 +1269,9 @@ async def wifi_sync_start(
 
     pc_total = db.get_count()
 
+    # 更新连接状态
+    wifi_sync_status["connected"] = True
+    wifi_sync_status["connection_type"] = connection_type
     wifi_sync_status.update({
         "running": True,
         "phase": "syncing",
@@ -1102,25 +1296,34 @@ async def wifi_sync_progress(
     synced: int = Form(0),
     skipped: int = Form(0),
     failed: int = Form(0),
+    bytes_sent: int = Form(0),
 ):
     """手机端上传过程中更新进度"""
     wifi_sync_status["current"] = current
     wifi_sync_status["synced"] = synced
     wifi_sync_status["skipped"] = skipped
     wifi_sync_status["failed"] = failed
+    wifi_sync_status["bytes_sent"] = bytes_sent
 
     # 更新 PC 文件数量
     wifi_sync_status["pc_total"] = db.get_count()
 
-    # 计算速度和剩余时间
+    # 计算速度和剩余时间 (MB/s)
     start = wifi_sync_status.get("start_time")
-    if start and synced > 0:
+    if start and bytes_sent > 0:
         elapsed = datetime.now().timestamp() - start
         if elapsed > 0:
-            speed = synced / elapsed
-            wifi_sync_status["speed"] = round(speed, 2)
+            # 字节转换为 MB/s
+            speed_mb = (bytes_sent / 1024 / 1024) / elapsed
+            wifi_sync_status["speed"] = round(speed_mb, 2)
+            # 剩余时间基于文件数量估算
             remaining = wifi_sync_status["need_sync"] - synced - failed
-            wifi_sync_status["eta"] = int(remaining / speed) if speed > 0 else 0
+            if speed_mb > 0:
+                # 估算平均每个文件的字节数
+                avg_bytes = bytes_sent / synced if synced > 0 else 0
+                remaining_bytes = avg_bytes * remaining
+                wifi_sync_status["eta"] = int(
+                    remaining_bytes / 1024 / 1024 / speed_mb) if speed_mb > 0 else 0
 
     return {"status": "ok"}
 
@@ -1131,14 +1334,37 @@ async def wifi_sync_stop(message: str = Form("")):
     wifi_sync_status["running"] = False
     wifi_sync_status["phase"] = "done"
     wifi_sync_status["current"] = message or "同步已完成"
+    wifi_sync_status["connected"] = False  # 连接结束
     db.set_last_scan(datetime.now().isoformat())
     return {"status": "ok"}
+
+
+@app.post("/api/wifi/request-sync")
+async def request_sync(conn_type: str = Form("")):
+    """PC 端请求手机开始同步"""
+    # 设置请求标志，手机端轮询时会收到
+    wifi_sync_status["pc_request_sync"] = True
+    wifi_sync_status["connection_type"] = conn_type or config.data.get("connection_type", "wifi")
+    return {"status": "ok", "message": "已向手机发送同步请求"}
+
+
+@app.get("/api/wifi/check-request")
+async def check_sync_request():
+    """手机端轮询检查是否需要开始同步"""
+    request = wifi_sync_status.get("pc_request_sync", False)
+    if request:
+        # 清除请求标志
+        wifi_sync_status["pc_request_sync"] = False
+    return {"request_sync": request}
 
 
 @app.get("/api/wifi/status")
 async def wifi_sync_get_status():
     """获取 WiFi 同步进度"""
-    return wifi_sync_status
+    return {
+        **wifi_sync_status,
+        "recent_photos": recent_synced_photos[-10:],  # 最近 10 张
+    }
 
 
 @app.post("/api/upload")
@@ -1149,7 +1375,7 @@ async def upload_photo(
     taken_date: str = Form(""),
     album: str = Form(""),
 ):
-    global upload_stats, upload_last_print
+    global upload_stats, upload_last_print, recent_synced_photos
     try:
         photos_dir = get_photos_dir()
 
@@ -1161,14 +1387,12 @@ async def upload_photo(
         save_dir = photos_dir / sub_dir
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        # 先读取内容计算MD5
-        content = await file.read()
-        actual_hash = hashlib.md5(content).hexdigest()
-        final_hash = file_hash if file_hash else actual_hash
+        # 如果客户端提供了 hash，直接使用（跳过 MD5 计算，大幅提升速度）
+        final_hash = file_hash if file_hash else ""
 
         # 检查该相册内是否已有该MD5（相册内去重）
-        if is_in_album_synced(sub_dir, final_hash):
-            # 统计跳过
+        # 只有当没有提供 hash 时才检查，否则跳过检查让客户端处理去重
+        if final_hash and is_in_album_synced(sub_dir, final_hash):
             upload_stats["total"] += 1
             upload_stats["skipped"] += 1
             return {"status": "skipped", "message": "相册内已存在相同文件"}
@@ -1185,10 +1409,34 @@ async def upload_photo(
 
         filename = save_path.name
 
+        # 流式写入文件，同时计算 MD5
+        md5_hash = hashlib.md5()
+        total_size = 0
         with open(save_path, "wb") as f:
-            f.write(content)
+            while True:
+                chunk = await file.read(64 * 1024)  # 64KB 块
+                if not chunk:
+                    break
+                f.write(chunk)
+                md5_hash.update(chunk)
+                total_size += len(chunk)
 
-        add_to_album_index(sub_dir, final_hash, filename, len(content))
+        # 如果没有提供 hash，则使用计算出的 hash
+        if not final_hash:
+            final_hash = md5_hash.hexdigest()
+            # 写入后再次检查去重
+            if is_in_album_synced(sub_dir, final_hash):
+                save_path.unlink()  # 删除重复文件
+                upload_stats["total"] += 1
+                upload_stats["skipped"] += 1
+                return {"status": "skipped", "message": "相册内已存在相同文件"}
+
+        add_to_album_index(sub_dir, final_hash, filename, total_size)
+
+        # 添加到最近同步列表（最多保留 50 条）
+        recent_synced_photos.append(f"{sub_dir}/{filename}")
+        if len(recent_synced_photos) > 50:
+            recent_synced_photos.pop(0)
 
         # 统计成功
         upload_stats["total"] += 1
@@ -1321,12 +1569,20 @@ async def adb_sync_get_status():
 
 
 @app.post("/api/adb/setup-reverse")
-async def adb_setup_reverse():
-    """为所有连接的设备设置 ADB reverse 端口转发"""
+async def adb_setup_reverse(serial: str = Form("")):
+    """为指定设备设置 ADB reverse 端口转发"""
     if not check_adb():
         return {"status": "error", "message": "ADB 不可用"}
 
-    devices = get_adb_devices()
+    if serial:
+        # 为指定设备设置
+        devices = [d for d in get_adb_devices(include_emulators=True) if d["serial"] == serial]
+        if not devices:
+            return {"status": "error", "message": f"设备 {serial} 未连接"}
+    else:
+        # 为所有设备设置
+        devices = get_adb_devices()
+
     if not devices:
         return {"status": "error", "message": "未检测到 ADB 设备"}
 

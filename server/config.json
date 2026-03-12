@@ -1,4 +1,5 @@
 {
-  "storage_path": "S:\\手机备份\\20260305",
+  "storage_path": "S:\\手机备份\\SM-S9260",
+  "connection_type": "adb",
   "adb_path": "C:/Users/Sierra/Desktop/platform-tools"
 }

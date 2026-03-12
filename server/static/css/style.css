@@ -17,57 +17,58 @@ body {
     padding: 24px 16px;
 }
 
-/* Header */
 header {
     text-align: center;
     margin-bottom: 24px;
+    position: relative;
 }
 
 header h1 {
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 700;
     color: #2563eb;
-    letter-spacing: -0.5px;
 }
 
 .subtitle {
     color: #6b7280;
     font-size: 14px;
-    margin-top: 4px;
-}
-
-/* Powered by Sierra */
-.powered-by {
-    font-family: "Georgia", "Times New Roman", serif;
-    font-style: italic;
-    font-size: 14px;
-    color: #9ca3af;
-    margin-top: 8px;
-    letter-spacing: 1px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.powered-by span {
-    color: #2563eb;
-    font-weight: 500;
 }
 
 .github-link {
-    display: inline-flex;
-    align-items: center;
-    color: #6b7280;
-    transition: color 0.2s;
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    width: 80px;
+    height: 80px;
+    overflow: hidden;
+    transition: transform 0.2s;
 }
 
 .github-link:hover {
-    color: #2563eb;
+    transform: scale(1.05);
 }
 
-.github-icon {
-    vertical-align: middle;
+.github-link svg {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 40px;
+    height: 40px;
+    color: #fff;
+    transform: rotate(45deg);
+}
+
+/* 右上角三角形背景 */
+.github-link::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, #2ea44f 0%, #26a641 100%);
+    transform: translate(30%, -30%) rotate(45deg);
+    box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.2);
 }
 
 .desc {
@@ -89,7 +90,7 @@ header h1 {
     font-size: 16px;
     font-weight: 600;
     margin-bottom: 16px;
-    color: #1a1a2e;
+    color: #374151;
 }
 
 /* 连接面板 */
@@ -225,18 +226,15 @@ header h1 {
 .input-group {
     display: flex;
     gap: 8px;
-    flex-wrap: wrap;
 }
 
 .input-group input {
     flex: 1;
-    min-width: 200px;
     padding: 10px 12px;
     border: 1px solid #d1d5db;
     border-radius: 6px;
     font-size: 14px;
     background: #fff;
-    color: #1a1a2e;
 }
 
 .input-group input:focus {
@@ -274,6 +272,14 @@ header h1 {
 
 .scan-log div {
     margin-bottom: 2px;
+}
+
+box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.input-group input[readonly] {
+    background: #f9fafb;
+    cursor: pointer;
 }
 
 .hint {
@@ -408,54 +414,28 @@ header h1 {
     vertical-align: middle;
 }
 
-/* 照片列表 - 滚动框 */
 .photo-grid {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    max-height: 280px;
+    gap: 4px;
+    height: 300px;
     overflow-y: auto;
-    padding-right: 8px;
-}
-
-/* 自定义滚动条 */
-.photo-grid::-webkit-scrollbar {
-    width: 8px;
-}
-
-.photo-grid::-webkit-scrollbar-track {
-    background: #f8fafc;
-    border-radius: 4px;
-}
-
-.photo-grid::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 4px;
-}
-
-.photo-grid::-webkit-scrollbar-thumb:hover {
-    background: #9ca3af;
 }
 
 .photo-item {
-    padding: 12px 14px;
+    padding: 8px 12px;
     background: #f3f4f6;
     border-radius: 4px;
-    overflow: hidden;
-    min-height: 40px;
-    line-height: 1.6;
 }
 
 .photo-item .photo-name {
-    color: #1f2937;
-    font-size: 14px;
+    color: #374151;
+    font-size: 12px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
 }
 
 .empty-state {
+    grid-column: 1 / -1;
     text-align: center;
     padding: 48px 16px;
     color: #9ca3af;
@@ -467,7 +447,11 @@ header h1 {
 }
 
 .pagination {
-    display: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 16px;
 }
 
 #page-info {
@@ -529,11 +513,50 @@ header h1 {
 
 .stat-label {
     font-size: 12px;
-    color: #9ca3af;
+    color: #6b7280;
 }
 
 .stat-value {
     font-size: 20px;
     font-weight: 600;
     color: #1f2937;
+}
+
+/* 手机连接面板 */
+.connection-status-row {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.connection-status-row .stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* 本次同步照片面板 */
+.recent-photos-panel {
+    padding: 12px 20px;
+}
+
+.recent-photos-panel h2 {
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.recent-photos-list {
+    height: 300px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: #4b5563;
+    line-height: 1.6;
+}
+
+.recent-photo-item {
+    display: block;
+    padding: 8px 12px;
+    background: #f3f4f6;
+    border-radius: 4px;
+    margin-bottom: 4px;
 }

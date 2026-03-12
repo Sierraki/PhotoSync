@@ -21,9 +21,9 @@
 ### 1. 环境准备
 在开始之前，请确保你的电脑已安装以下软件：
 * **Python**: 建议版本 3.8+。
-* **ADB (Android Debug Bridge)**: 
-    * 本仓库已内置基础版本。
-    * 也可以前往 [Android 官网](https://developer.android.com/tools/releases/platform-tools?hl=zh-cn) 下载最新的 **SDK Platform-Tools**。
+* ****~~ADB (Android Debug Bridge)~~****: 
+    * **~~本仓库已内置基础版本。~~**
+    * **~~也可以前往 [Android 官网](https://developer.android.com/tools/releases/platform-tools?hl=zh-cn) 下载最新的 **SDK Platform-Tools**。~~**
 
 ### 2. 安装步骤
 
@@ -57,10 +57,13 @@ python main.py
 
 
 ### B ADB链接(有线)
-```
+
+``` 
 基础设置：设置电脑端的照片存储路径。
-配置 ADB：在界面中指定 ADB 路径（选择包含 adb 执行文件的文件夹）。
-提示：若路径正确，界面会显示 “ADB 可用”。
+``` 
+**~~配置 ADB：在界面中指定 ADB 路径（选择包含 adb 执行文件的文件夹）。~~**
+**~~提示：若路径正确，界面会显示 “ADB 可用”。~~**
+ ``` 
 准备连接：
 点击界面上的设置端口转发按钮。
 在手机上打开 USB 调试，并使用数据线连接电脑。

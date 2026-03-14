@@ -110,6 +110,10 @@ async function loadStatus() {
         const pathInput = document.getElementById("storage-path-input");
         if (!pathInput._userEdited) pathInput.value = data.storage_path;
 
+        // 服务器端口
+        const portInput = document.getElementById("server-port-input");
+        if (!portInput._userEdited) portInput.value = data.server_port || 8920;
+
         // ADB 路径（已移除，使用内置 ADB）
 
         // 连接方式
@@ -207,6 +211,21 @@ async function savePath() {
         loadStatus();
     } catch (e) {
         alert("保存失败");
+    }
+}
+
+async function savePort() {
+    const port = parseInt(document.getElementById("server-port-input").value);
+    if (!port || port < 1024 || port > 65535) {
+        return alert("请输入有效端口号 (1024-65535)");
+    }
+    try {
+        const fd = new FormData();
+        fd.append("port", port.toString());
+        const data = await fetchJSON("/api/settings/port", { method: "POST", body: fd });
+        alert(data.message || (data.status === "ok" ? "保存成功" : "保存失败"));
+    } catch (e) {
+        alert("保存失败: " + e.message);
     }
 }
 

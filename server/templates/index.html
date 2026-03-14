@@ -111,6 +111,15 @@
                 </div>
             </div>
             <div class="setting-row">
+                <label>服务器端口</label>
+                <div class="input-group">
+                    <input type="number" id="server-port-input" placeholder="8920" style="width: 100px;" min="1024"
+                        max="65535">
+                    <button type="button" class="btn" onclick="savePort()">保存并重启</button>
+                    <span class="hint">修改后需重启服务器生效</span>
+                </div>
+            </div>
+            <div class="setting-row">
                 <label>照片存储路径</label>
                 <div class="input-group">
                     <input type="text" id="storage-path-input" placeholder="输入或选择文件夹路径" style="width: 300px;">

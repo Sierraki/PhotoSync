@@ -1,8 +1,8 @@
 {
   "stats": {
-    "total": 18918,
+    "total": 18916,
     "last_sync": "2026-03-04T16:06:45.077064",
-    "last_scan": "2026-03-12T20:02:48.039579"
+    "last_scan": "2026-03-12T23:23:06.849660"
   },
   "albums": {
     "Camera": {
@@ -46223,11 +46223,6 @@
       }
     },
     "Screenshots": {
-      "78a3e98e1c35356872fe183180984516": {
-        "filename": "Screenshot_20260311_180452.jpg",
-        "size": 1073544,
-        "mtime": 1773304690.605176
-      },
       "9abb3059d2e61b6e4a9a9138baa5f5fe": {
         "filename": "Screenshot_20260311_174238_WeChat.jpg",
         "size": 552606,
@@ -46832,11 +46827,6 @@
         "filename": "20241214_191707.JPG",
         "size": 592788,
         "mtime": 1773307843.395804
-      },
-      "6b4b09affcc3aba6ad4d0e14075d5fbd": {
-        "filename": "Screenshot_20260312_173117_PhotoSync.jpg",
-        "size": 643339,
-        "mtime": 1773308652.202716
       },
       "a8a9ca4fe4314de618e492422f5b6af0": {
         "filename": "20240214_191100.PNG",

@@ -49,6 +49,7 @@ class Config:
         self.data = {
             "storage_path": str(DEFAULT_STORAGE),
             "connection_type": "wifi",  # "wifi" 或 "adb"
+            "server_port": 8920,
         }
         self.load()
 
@@ -65,6 +66,10 @@ class Config:
     @property
     def storage_path(self) -> Path:
         return Path(self.data["storage_path"])
+
+    @property
+    def server_port(self) -> int:
+        return int(self.data.get("server_port", 8920))
 
     @property
     def adb_executable(self) -> str:
@@ -852,6 +857,22 @@ async def get_qrcode(url: str = ""):
     return StreamingResponse(buf, media_type="image/png")
 
 
+@app.post("/api/settings/port")
+async def set_server_port(port: str = Form("")):
+    """设置服务器端口"""
+    try:
+        p = int(port)
+        if p < 1024 or p > 65535:
+            return {"status": "error", "message": "端口号应在 1024-65535 之间"}
+        config.data["server_port"] = p
+        config.save()
+        print(f"[设置] 端口已保存为: {p}")
+        return {"status": "ok", "message": f"端口已保存为 {p}，请重启服务器"}
+    except Exception as e:
+        print(f"[错误] 保存端口失败: {e}")
+        return {"status": "error", "message": f"设置失败: {e}"}
+
+
 @app.post("/api/settings/storage")
 async def set_storage_path(path: str = Form("")):
     try:
@@ -1613,6 +1634,9 @@ if __name__ == "__main__":
         sys.stderr = open(os.devnull, 'w')
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    # 从配置读取端口
+    SERVER_PORT = config.server_port
 
     # 启动时清理不存在的文件记录
     _verify_and_clean_db()

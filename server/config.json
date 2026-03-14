@@ -1,5 +1,6 @@
 {
   "storage_path": "S:\\手机备份\\SM-S9260",
   "connection_type": "adb",
+  "server_port": 9000,
   "adb_path": "C:/Users/Sierra/Desktop/platform-tools"
 }

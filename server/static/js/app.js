@@ -188,7 +188,8 @@ async function browseAdbFolder() {
     try {
         const data = await fetchJSON("/api/settings/browse", { method: "POST" });
         if (data.status === "ok" && data.path) {
-            document.getElementById("adb-path-input").value = data.path;
+            const input = document.getElementById("adb-path-input");
+            if (input) input.value = data.path;
         } else if (data.status === "cancelled") {
             // 用户取消了选择，不做任何事
         } else {
@@ -281,7 +282,8 @@ async function scanLocalDatabase() {
 }
 
 async function saveAdbPath() {
-    const path = document.getElementById("adb-path-input").value.trim();
+    const input = document.getElementById("adb-path-input");
+    const path = input ? input.value.trim() : "";
     try {
         const fd = new FormData();
         fd.append("path", path);

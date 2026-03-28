@@ -3,7 +3,6 @@ PhotoSync PC Server
 局域网/USB 手机相册同步到电脑的接收端服务器
 使用本地数据库进行快速索引，同步时与实际文件交叉验证
 """
-import time
 import json
 import os
 import io
@@ -18,7 +17,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -73,8 +72,19 @@ class Config:
 
     @property
     def adb_executable(self) -> str:
-        # 使用内置 ADB
-        builtin_adb = Path(__file__).parent.parent / "ADB" / "adb.exe"
+        # 优先使用配置的 ADB 路径
+        custom_path = self.data.get("adb_path", "")
+        if custom_path:
+            adb_dir = Path(custom_path)
+            if (adb_dir / "adb.exe").exists():
+                return str(adb_dir / "adb.exe")
+            if adb_dir.is_file():
+                return str(adb_dir)
+        # 使用内置 ADB（相对于主程序目录，兼容 PyInstaller onefile 打包）
+        if getattr(sys, 'frozen', False):
+            builtin_adb = Path(sys.executable).parent / "ADB" / "adb.exe"
+        else:
+            builtin_adb = Path(__file__).parent.parent / "ADB" / "adb.exe"
         if builtin_adb.exists():
             return str(builtin_adb)
         # 备用：尝试系统 PATH 中的 adb
@@ -85,14 +95,12 @@ config = Config(CONFIG_FILE)
 
 # 启动时验证存储路径，无效则回退到默认路径
 try:
-    PHOTOS_DIR = config.storage_path
-    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+    config.storage_path.mkdir(parents=True, exist_ok=True)
 except (OSError, FileNotFoundError):
     print(f"[警告] 存储路径无效: {config.storage_path}，使用默认路径")
     config.data["storage_path"] = str(DEFAULT_STORAGE)
     config.save()
-    PHOTOS_DIR = config.storage_path
-    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+    config.storage_path.mkdir(parents=True, exist_ok=True)
 
 
 # ─── 数据库 ──────────────────────────────────────────────
@@ -202,6 +210,13 @@ class SyncDB:
 db = SyncDB(DB_FILE)
 
 
+# ─── 文件类型 ─────────────────────────────────────────────
+PHOTO_EXTS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+    ".mp4", ".mov", ".avi", ".mkv", ".heic", ".heif",
+}
+
+
 # ─── 扫描同步 ────────────────────────────────────────────
 scan_status = {
     "running": False,
@@ -268,8 +283,11 @@ def _scan_local_files():
             filepath = Path(root) / fname
             try:
                 stat = filepath.stat()
-                content = filepath.read_bytes()
-                md5 = hashlib.md5(content).hexdigest()
+                md5_h = hashlib.md5()
+                with open(filepath, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        md5_h.update(chunk)
+                md5 = md5_h.hexdigest()
                 rel_path = filepath.relative_to(photos_dir)
                 parts = rel_path.as_posix().split("/")
                 if len(parts) >= 2:
@@ -307,8 +325,7 @@ def _scan_local_files():
                 db.add_to_album(album, md5, info["filename"], info["size"], info["mtime"])
                 added += 1
 
-    db.save()
-    db.set_last_scan(datetime.now().isoformat())
+    db.set_last_scan(datetime.now().isoformat())  # set_last_scan 内部已调用 save()
 
     scan_status["log"].append(f"数据库记录: {db.get_count()} 个")
     scan_status["log"].append(f"需新增: {added} 个")
@@ -328,12 +345,6 @@ def start_local_scan():
 
 
 # ─── 工具函数 ─────────────────────────────────────────────
-PHOTO_EXTS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
-    ".mp4", ".mov", ".avi", ".mkv", ".heic", ".heif",
-}
-
-
 def count_pc_photos() -> int:
     """快速统计电脑端照片文件数量（基于数据库）"""
     return db.get_count()
@@ -362,31 +373,6 @@ def add_to_album_index(album: str, md5: str, filename: str, size: int = 0):
     mtime = datetime.now().timestamp()
     db.add_to_album(album, md5, filename, size, mtime)
     db.save()
-
-
-def get_pc_path_count() -> int:
-    """获取数据库中的文件数量"""
-    return db.get_count()
-
-
-# 旧函数名兼容
-def is_hash_synced(md5: str) -> bool:
-    """旧接口：检查 MD5 是否存在（遍历查找）"""
-    for path, info in db.data["files"].items():
-        if info.get("md5") == md5:
-            file_path = get_photos_dir() / path
-            if file_path.exists():
-                return True
-            else:
-                db.remove_by_path(path)
-                db.save()
-                return False
-    return False
-
-
-def add_hash_to_index(md5: str, rel_path: str, size: int = 0):
-    """旧接口兼容"""
-    add_path_to_index(rel_path, md5, size)
 
 
 def get_pc_hash_count() -> int:
@@ -680,8 +666,6 @@ def _run_adb_sync(serial: str, device_name: str):
             if part in ("DCIM", "Pictures") and j + 1 < len(parts):
                 album = parts[j + 1]
                 break
-        if album == "Camera":
-            album = "Camera"
 
         # 相册内去重检查
         if is_in_album_synced(album, md5):
@@ -900,6 +884,19 @@ async def set_connection_type(conn_type: str = Form(...)):
     return {"status": "ok", "message": f"已切换到 {conn_type.upper()} 连接"}
 
 
+@app.post("/api/settings/adb_path")
+async def set_adb_path(path: str = Form("")):
+    """设置 ADB 工具路径（可填目录或 adb.exe 完整路径）"""
+    if path:
+        adb_dir = Path(path)
+        adb_exe = adb_dir / "adb.exe"
+        if not adb_exe.exists() and not adb_dir.is_file():
+            return {"status": "error", "message": f"路径无效，未找到 adb.exe: {path}"}
+    config.data["adb_path"] = path
+    config.save()
+    return {"status": "ok", "message": "ADB 路径已保存", "path": path}
+
+
 @app.post("/api/phone/register")
 async def phone_register(device: str = Form(""), connection_type: str = Form("wifi")):
     """手机端注册连接状态"""
@@ -1001,8 +998,11 @@ def scan_local_photos():
         if not scan_progress["running"]:
             break
         try:
+            md5_h = hashlib.md5()
             with open(file_path, "rb") as f:
-                md5 = hashlib.md5(f.read()).hexdigest()
+                for chunk in iter(lambda: f.read(65536), b""):
+                    md5_h.update(chunk)
+            md5 = md5_h.hexdigest()
 
             rel_path = file_path.relative_to(photos_dir)
             parts = str(rel_path).replace("\\", "/").split("/")
@@ -1049,8 +1049,7 @@ def scan_local_photos():
                     removed += 1
                     break
 
-    db.save()
-    db.set_last_scan(datetime.now().isoformat())
+    db.set_last_scan(datetime.now().isoformat())  # set_last_scan 内部已调用 save()
 
     scan_progress["added"] = added
     scan_progress["removed"] = removed
@@ -1081,8 +1080,8 @@ async def scan_local_photos_api():
 
 
 @app.get("/api/settings/scan-status")
-async def get_scan_status():
-    """获取扫描状态"""
+async def get_settings_scan_status():
+    """获取扫描状态（settings 面板使用）"""
     return scan_progress
 
 
@@ -1393,7 +1392,6 @@ async def upload_photo(
     file: UploadFile = File(...),
     file_hash: str = Form(""),
     original_name: str = Form(...),
-    taken_date: str = Form(""),
     album: str = Form(""),
 ):
     global upload_stats, upload_last_print, recent_synced_photos
@@ -1409,7 +1407,7 @@ async def upload_photo(
         save_dir.mkdir(parents=True, exist_ok=True)
 
         # 如果客户端提供了 hash，直接使用（跳过 MD5 计算，大幅提升速度）
-        final_hash = file_hash if file_hash else ""
+        final_hash = file_hash
 
         # 检查该相册内是否已有该MD5（相册内去重）
         # 只有当没有提供 hash 时才检查，否则跳过检查让客户端处理去重
@@ -1529,7 +1527,14 @@ async def list_photos(page: int = 1, per_page: int = 50):
 @app.get("/api/photo/{path:path}")
 async def get_photo(path: str):
     """按相对路径获取照片"""
-    photo_path = get_photos_dir() / path
+    photos_dir = get_photos_dir()
+    photo_path = (photos_dir / path).resolve()
+    # 防止路径遍历攻击，确保访问的文件在 photos_dir 范围内
+    try:
+        photo_path.relative_to(photos_dir.resolve())
+    except ValueError:
+        print(f"[安全] 拒绝路径遍历请求: {path}")
+        raise HTTPException(status_code=403, detail="禁止访问")
     if not photo_path.exists():
         raise HTTPException(status_code=404)
     return FileResponse(str(photo_path))

@@ -1,0 +1,64 @@
+# 项目特定文件
+android/
+PhotoSync.apk
+PhotoSync.code-workspace
+MIGRATION_CHANGES.md
+sync.ffs_db
+
+# Python 相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.log
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 本地配置和数据
+config.json
+sync_db.json
+sync_db.json.bak
+*.db
+*.sqlite
+*.sqlite3
+
+# Android 构建文件
+android/app/build/
+android/.gradle/
+*.apk
+*.aab
+
+# 临时文件
+*.tmp
+*.bak
+.temp/
+temp/

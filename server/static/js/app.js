@@ -1,0 +1,785 @@
+let syncPollTimer = null;
+let selectedDeviceSerial = "";
+let activeWifiSyncMode = "";
+let activeWifiSyncPhase = "";
+let lastWifiLogSnapshot = "";
+let wifiStoppingSinceMs = 0;
+let wifiStatusErrorStreak = 0;
+let localWifiSyncLogs = [];
+
+const STOPPING_UI_TIMEOUT_MS = 4000;
+const WIFI_STATUS_ERROR_RESET_THRESHOLD = 3;
+
+function addWifiSyncLogMessage(msg) {
+    const timestamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    const fullMsg = `[${timestamp}] ${msg}`;
+    localWifiSyncLogs.push(fullMsg);
+    const logEl = document.getElementById("wifi-sync-log");
+    if (logEl) {
+        if (logEl.textContent === "等待同步日志..." || logEl.textContent === "") {
+            logEl.textContent = fullMsg;
+        } else {
+            logEl.textContent += "\n" + fullMsg;
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+}
+
+async function fetchJSON(url, options) {
+    const resp = await fetch(url, options);
+    return resp.json();
+}
+
+// ─── 手机连接状态 ──────────────────────────────────
+async function loadConnectionStatus() {
+    try {
+        const data = await fetchJSON("/api/wifi/status");
+
+        const statusEl = document.getElementById("connection-status");
+        const methodEl = document.getElementById("connection-method");
+
+        if (data.connected) {
+            statusEl.textContent = "已连接";
+            statusEl.style.color = "green";
+
+            const connType = data.connection_type || "wifi";
+            methodEl.textContent = connType === "adb" ? "USB ADB" : "WiFi 局域网";
+        } else {
+            statusEl.textContent = "未连接";
+            statusEl.style.color = "gray";
+            methodEl.textContent = "-";
+        }
+
+        // 更新最近同步的照片列表
+        const recentPhotos = data.recent_photos || [];
+        const recentListEl = document.getElementById("recent-photos-list");
+        if (recentPhotos.length > 0) {
+            recentListEl.innerHTML = recentPhotos.map(p =>
+                `<span class="recent-photo-item">${p}</span>`
+            ).join("");
+            // 更新本次同步计数
+            document.getElementById("sync-count").textContent = data.synced || 0;
+        } else if (!data.running && data.phase !== "syncing") {
+            recentListEl.innerHTML = '<div class="empty-state"><p class="hint">同步开始后显示</p></div>';
+            document.getElementById("sync-count").textContent = "0";
+        }
+    } catch (e) {
+        console.error("加载连接状态失败:", e);
+    }
+}
+
+function updateSyncActionButtons() {
+    const btnInc = document.getElementById("btn-sync-incremental");
+    const btnFull = document.getElementById("btn-sync-full");
+    if (!btnInc || !btnFull) return;
+
+    maybeRecoverFromStaleWifiStopping();
+
+    btnInc.classList.remove("btn-stop");
+    btnFull.classList.remove("btn-stop");
+    btnInc.textContent = "增量同步";
+    btnFull.textContent = "全量同步";
+    btnInc.disabled = false;
+    btnFull.disabled = false;
+
+    const hasPendingOrRunning =
+        activeWifiSyncPhase === "requested" ||
+        activeWifiSyncPhase === "scanning" ||
+        activeWifiSyncPhase === "syncing" ||
+        activeWifiSyncPhase === "preparing_full" ||
+        activeWifiSyncPhase === "stopping";
+    if (!hasPendingOrRunning) return;
+
+    if (activeWifiSyncMode === "full") {
+        btnFull.textContent = "停止同步";
+        btnFull.classList.add("btn-stop");
+        btnInc.disabled = true;
+        btnInc.textContent = "当前：全量";
+    } else {
+        btnInc.textContent = "停止同步";
+        btnInc.classList.add("btn-stop");
+        btnFull.disabled = true;
+        btnFull.textContent = "当前：增量";
+    }
+}
+
+function maybeRecoverFromStaleWifiStopping() {
+    if (activeWifiSyncPhase !== "stopping") return;
+    if (!wifiStoppingSinceMs) return;
+
+    const elapsed = Date.now() - wifiStoppingSinceMs;
+    if (elapsed < STOPPING_UI_TIMEOUT_MS) return;
+
+    resetWifiSyncUiState();
+}
+
+function markWifiStoppingIfNeeded() {
+    if (activeWifiSyncPhase === "stopping") {
+        if (!wifiStoppingSinceMs) {
+            wifiStoppingSinceMs = Date.now();
+        }
+    } else {
+        wifiStoppingSinceMs = 0;
+    }
+}
+
+function resetWifiSyncUiState() {
+    activeWifiSyncMode = "";
+    activeWifiSyncPhase = "";
+    wifiStoppingSinceMs = 0;
+}
+
+function normalizeWifiMode(raw) {
+    return raw === "full" ? "full" : "incremental";
+}
+
+function getEffectiveWifiMode(status) {
+    const phase = status.phase || "";
+    const syncMode = status.sync_mode;
+    const requestedMode = status.requested_sync_mode;
+
+    // 运行态优先使用手机端实际上报的 sync_mode；请求态再看 requested_sync_mode。
+    if (phase === "scanning" || phase === "syncing" || status.running) {
+        if (syncMode === "full" || syncMode === "incremental") {
+            return normalizeWifiMode(syncMode);
+        }
+    }
+    if (phase === "requested" || phase === "preparing_full" || phase === "stopping") {
+        if (requestedMode === "full" || requestedMode === "incremental") {
+            return normalizeWifiMode(requestedMode);
+        }
+    }
+
+    if (syncMode === "full" || syncMode === "incremental") {
+        return normalizeWifiMode(syncMode);
+    }
+    if (requestedMode === "full" || requestedMode === "incremental") {
+        return normalizeWifiMode(requestedMode);
+    }
+    return "";
+}
+
+async function requestSync(mode = "incremental") {
+    const connType = document.getElementById("connection-type-select").value;
+    const normalizedMode = mode === "full" ? "full" : "incremental";
+    const btnInc = document.getElementById("btn-sync-incremental");
+    const btnFull = document.getElementById("btn-sync-full");
+
+    // 当前模式已处于请求中/同步中，再点则尝试停止（请求中可取消）
+    if (activeWifiSyncMode === normalizedMode &&
+        (activeWifiSyncPhase === "requested" || activeWifiSyncPhase === "scanning" || activeWifiSyncPhase === "syncing" || activeWifiSyncPhase === "preparing_full" || activeWifiSyncPhase === "stopping")) {
+        if (activeWifiSyncPhase === "requested" || activeWifiSyncPhase === "preparing_full") {
+            try {
+                const data = await fetchJSON("/api/wifi/request-stop", { method: "POST" });
+                addWifiSyncLogMessage(data.message || "已发送停止请求");
+            } catch (e) {
+                addWifiSyncLogMessage("停止失败: " + e.message);
+            }
+            return;
+        }
+
+        if (activeWifiSyncPhase === "stopping") {
+            addWifiSyncLogMessage("正在停止中，请稍候...");
+            return;
+        }
+
+        try {
+            const data = await fetchJSON("/api/wifi/request-stop", { method: "POST" });
+            addWifiSyncLogMessage(data.message || "已发送停止请求");
+        } catch (e) {
+            addWifiSyncLogMessage("停止失败: " + e.message);
+        }
+        return;
+    }
+
+    btnInc.disabled = true;
+    btnFull.disabled = true;
+    if (normalizedMode === "full") {
+        btnFull.textContent = "准备全量...";
+    } else {
+        btnInc.textContent = "发送请求...";
+    }
+
+    try {
+        const syncFd = new FormData();
+        syncFd.append("conn_type", connType);
+        syncFd.append("sync_mode", normalizedMode);
+        const syncData = await fetchJSON("/api/wifi/request-sync", { method: "POST", body: syncFd });
+
+        if (syncData.status === "ok") {
+            activeWifiSyncMode = normalizedMode;
+            activeWifiSyncPhase = normalizedMode === "full" ? "preparing_full" : "requested";
+            updateSyncActionButtons();
+            addWifiSyncLogMessage(syncData.message || "已发送同步请求");
+        } else {
+            addWifiSyncLogMessage(syncData.message || "请求失败");
+        }
+    } catch (e) {
+        addWifiSyncLogMessage("请求失败: " + e.message);
+    } finally {
+        updateSyncActionButtons();
+    }
+}
+
+// ─── 服务器状态 ──────────────────────────────────
+async function loadStatus() {
+    try {
+        const data = await fetchJSON("/api/status");
+        document.getElementById("server-url").textContent = data.server_url;
+        document.getElementById("total-synced").textContent = data.total_synced;
+        document.getElementById("last-sync").textContent =
+            data.last_sync ? new Date(data.last_sync).toLocaleString("zh-CN") : "从未";
+
+        // 更新同步状态面板的电脑端照片数量
+        document.getElementById("sync-pc-total").textContent = data.total_synced;
+
+        // 显示备用地址（多网卡时）
+        const altUrls = data.all_urls || [];
+        const altArea = document.getElementById("alt-urls");
+        const altList = document.getElementById("alt-urls-list");
+        if (altUrls.length > 1) {
+            altArea.style.display = "";
+            altList.innerHTML = altUrls.slice(1).map(u =>
+                `<span class="alt-url" onclick="switchUrl('${u}')" title="点击切换">${u}</span>`
+            ).join("");
+        } else {
+            altArea.style.display = "none";
+        }
+
+        // 存储路径
+        const pathInput = document.getElementById("storage-path-input");
+        if (!pathInput._userEdited) pathInput.value = data.storage_path;
+
+        // 服务器端口
+        const portInput = document.getElementById("server-port-input");
+        if (!portInput._userEdited) portInput.value = data.server_port || 8920;
+
+        // ADB 路径（已移除，使用内置 ADB）
+
+        // 连接方式
+        const connType = data.connection_type || "wifi";
+        updateConnectionUI(connType);
+    } catch (e) {
+        console.error("加载状态失败:", e);
+    }
+}
+
+// ─── 照片列表 ──────────────────────────────────
+async function loadPhotos() {
+    try {
+        const data = await fetchJSON("/api/photos?per_page=200");
+        document.getElementById("photo-count").textContent = data.total;
+        const grid = document.getElementById("photo-grid");
+
+        if (data.total === 0) {
+            grid.innerHTML = `<div class="empty-state"><p>暂无同步的照片</p><p class="hint">通过手机 App 开始同步</p></div>`;
+            return;
+        }
+        grid.innerHTML = data.photos.map(photo => {
+            return `<div class="photo-item"><div class="photo-name" title="${photo.name}">${photo.name}</div></div>`;
+        }).join("");
+    } catch (e) {
+        console.error("加载照片失败:", e);
+    }
+}
+
+// ─── 复制地址 ──────────────────────────────────
+function copyAddress() {
+    const url = document.getElementById("server-url").textContent;
+    navigator.clipboard.writeText(url).then(() => {
+        const toast = document.getElementById("copy-toast");
+        toast.classList.add("show");
+        setTimeout(() => toast.classList.remove("show"), 2000);
+    });
+}
+
+function switchUrl(url) {
+    document.getElementById("server-url").textContent = url;
+    navigator.clipboard.writeText(url).then(() => {
+        const toast = document.getElementById("copy-toast");
+        toast.textContent = "已切换并复制: " + url;
+        toast.classList.add("show");
+        setTimeout(() => {
+            toast.classList.remove("show");
+            toast.textContent = "已复制到剪贴板";
+        }, 2000);
+    });
+}
+
+// ─── 设置 ──────────────────────────────────
+async function browseFolder() {
+    try {
+        const data = await fetchJSON("/api/settings/browse", { method: "POST" });
+        if (data.status === "ok" && data.path) {
+            document.getElementById("storage-path-input").value = data.path;
+            document.getElementById("storage-path-input")._userEdited = true;
+        } else if (data.status === "cancelled") {
+            // 用户取消了选择，不做任何事
+        } else {
+            // 浏览失败，提示手动输入
+            alert("无法打开文件夹选择器，请手动输入路径");
+        }
+    } catch (e) {
+        alert("浏览文件夹失败，请手动输入路径");
+    }
+}
+
+async function browseAdbFolder() {
+    try {
+        const data = await fetchJSON("/api/settings/browse", { method: "POST" });
+        if (data.status === "ok" && data.path) {
+            document.getElementById("adb-path-input").value = data.path;
+        } else if (data.status === "cancelled") {
+            // 用户取消了选择，不做任何事
+        } else {
+            alert("无法打开文件夹选择器，请手动输入路径");
+        }
+    } catch (e) {
+        alert("浏览文件夹失败，请手动输入路径");
+    }
+}
+
+async function savePath() {
+    const path = document.getElementById("storage-path-input").value.trim();
+    if (!path) {
+        addWifiSyncLogMessage("请输入有效路径");
+        return;
+    }
+    try {
+        const buildForm = (confirmCreate) => {
+            const form = new FormData();
+            form.append("path", path);
+            if (confirmCreate) {
+                form.append("confirm_create", "true");
+            }
+            return form;
+        };
+
+        let data = await fetchJSON("/api/settings/storage", {
+            method: "POST",
+            body: buildForm(false),
+        });
+
+        if (data.status === "need_confirm") {
+            const ok = confirm(data.message || `路径不存在，是否创建？\n${path}`);
+            if (!ok) {
+                return;
+            }
+            data = await fetchJSON("/api/settings/storage", {
+                method: "POST",
+                body: buildForm(true),
+            });
+        }
+
+        alert(data.message || "保存成功");
+        document.getElementById("storage-path-input")._userEdited = false;
+        loadStatus();
+    } catch (e) {
+        alert("保存失败");
+    }
+}
+
+async function savePort() {
+    const port = parseInt(document.getElementById("server-port-input").value);
+    if (!port || port < 1024 || port > 65535) {
+        return alert("请输入有效端口号 (1024-65535)");
+    }
+    try {
+        const fd = new FormData();
+        fd.append("port", port.toString());
+        const data = await fetchJSON("/api/settings/port", { method: "POST", body: fd });
+        addWifiSyncLogMessage(data.message || (data.status === "ok" ? "保存成功" : "保存失败"));
+    } catch (e) {
+        alert("保存失败: " + e.message);
+    }
+}
+
+// ─── 本地数据库扫描 ──────────────────────────────────
+let scanPollTimer = null;
+
+async function scanLocalDatabase() {
+    const statusEl = document.getElementById("scan-status");
+    const btn = event.target;
+
+    btn.disabled = true;
+    btn.textContent = "扫描中...";
+    statusEl.textContent = "开始扫描...";
+    statusEl.style.color = "#6B7280";
+
+    try {
+        const data = await fetchJSON("/api/settings/scan-local", { method: "POST" });
+        if (data.status === "ok") {
+            statusEl.textContent = "扫描中...";
+            statusEl.style.color = "#6B7280";
+            // 开始轮询扫描状态
+            scanPollTimer = setInterval(async () => {
+                const statusData = await fetchJSON("/api/settings/scan-status");
+                if (statusData.running) {
+                    statusEl.textContent = `已扫描: ${statusData.scanned}/${statusData.total}`;
+                } else {
+                    clearInterval(scanPollTimer);
+                    btn.disabled = false;
+                    btn.textContent = "刷新数据库";
+                    // 获取数据库总数
+                    const status = await fetchJSON("/api/status");
+                    const detail = statusData.current ? ` | ${statusData.current}` : "";
+                    statusEl.textContent = `数据库总计: ${status.total_synced} 个文件${detail}`;
+                    statusEl.style.color = "green";
+                    loadStatus(); // 刷新显示的照片数量
+                }
+            }, 1000);
+        } else {
+            statusEl.textContent = data.message || "扫描失败";
+            statusEl.style.color = "red";
+            btn.disabled = false;
+            btn.textContent = "刷新数据库";
+        }
+    } catch (e) {
+        statusEl.textContent = "扫描失败";
+        statusEl.style.color = "red";
+        btn.disabled = false;
+        btn.textContent = "刷新数据库";
+    }
+}
+
+async function saveAdbPath() {
+    const path = document.getElementById("adb-path-input").value.trim();
+    try {
+        const fd = new FormData();
+        fd.append("path", path);
+        const data = await fetchJSON("/api/settings/adb_path", { method: "POST", body: fd });
+        alert(data.message || "保存成功");
+        loadStatus();
+    } catch (e) {
+        alert("保存失败");
+    }
+}
+
+// ─── USB 设备选择 ──────────────────────────────────
+async function refreshDevices() {
+    const selectEl = document.getElementById("adb-device-select");
+    try {
+        const data = await fetchJSON("/api/status");
+        const devices = data.all_adb_devices || [];
+
+        selectEl.innerHTML = '<option value="">-- 选择设备 --</option>';
+        for (const dev of devices) {
+            const label = dev.model ? `${dev.model} (${dev.serial})` : dev.serial;
+            const option = document.createElement("option");
+            option.value = dev.serial;
+            option.textContent = label;
+            if (dev.serial === selectedDeviceSerial) {
+                option.selected = true;
+            }
+            selectEl.appendChild(option);
+        }
+
+        if (devices.length === 0) {
+            selectEl.innerHTML = '<option value="">-- 未检测到设备 --</option>';
+        }
+    } catch (e) {
+        console.error("刷新设备失败:", e);
+    }
+}
+
+function onDeviceSelected() {
+    const selectEl = document.getElementById("adb-device-select");
+    selectedDeviceSerial = selectEl.value;
+    console.log("选中设备:", selectedDeviceSerial);
+}
+
+// ─── 连接方式选择 ──────────────────────────────────
+async function onConnectionTypeChanged() {
+    const selectEl = document.getElementById("connection-type-select");
+    const connType = selectEl.value;
+    const statusEl = document.getElementById("connection-type-status");
+    const usbSettings = document.getElementById("usb-settings");
+
+    try {
+        const fd = new FormData();
+        fd.append("conn_type", connType);
+        const data = await fetchJSON("/api/settings/connection", { method: "POST", body: fd });
+
+        if (data.status === "ok") {
+            statusEl.textContent = "✓ " + data.message;
+            statusEl.style.color = "green";
+            // 根据连接类型显示/隐藏 USB 设置
+            usbSettings.style.display = connType === "adb" ? "flex" : "none";
+            // 切换到 ADB 时自动刷新设备列表
+            if (connType === "adb") {
+                await refreshDevices();
+            }
+        } else {
+            statusEl.textContent = "✗ " + data.message;
+            statusEl.style.color = "red";
+        }
+    } catch (e) {
+        statusEl.textContent = "✗ 设置失败";
+        statusEl.style.color = "red";
+    }
+}
+
+async function testConnection() {
+    const connType = document.getElementById("connection-type-select").value;
+    const statusEl = document.getElementById("connection-test-status");
+    const deviceSerial = document.getElementById("adb-device-select")?.value || "";
+
+    statusEl.textContent = "测试中...";
+    statusEl.style.color = "#6B7280";
+
+    try {
+        const fd = new FormData();
+        fd.append("conn_type", connType);
+        fd.append("device_serial", deviceSerial);
+        const data = await fetchJSON("/api/test-connection", { method: "POST", body: fd });
+
+        if (data.status === "ok") {
+            statusEl.textContent = "✓ " + data.message;
+            statusEl.style.color = "green";
+        } else {
+            statusEl.textContent = "✗ " + data.message;
+            statusEl.style.color = "red";
+        }
+    } catch (e) {
+        statusEl.textContent = "✗ 测试失败";
+        statusEl.style.color = "red";
+    }
+}
+
+function updateConnectionUI(connType) {
+    const selectEl = document.getElementById("connection-type-select");
+    const usbSettings = document.getElementById("usb-settings");
+
+    if (selectEl) {
+        selectEl.value = connType;
+    }
+    if (usbSettings) {
+        usbSettings.style.display = connType === "adb" ? "flex" : "none";
+        // 如果是 ADB 模式，刷新设备列表
+        if (connType === "adb") {
+            refreshDevices();
+        }
+    }
+}
+
+async function setupAdbReverse() {
+    const selectEl = document.getElementById("adb-device-select");
+    const deviceSerial = selectEl.value;
+
+    if (!deviceSerial) {
+        alert("请先选择设备");
+        return;
+    }
+
+    const statusEl = document.getElementById("adb-reverse-status");
+    statusEl.textContent = "正在设置...";
+    statusEl.style.color = "#6B7280";
+    try {
+        const fd = new FormData();
+        fd.append("serial", deviceSerial);
+        const data = await fetchJSON("/api/adb/setup-reverse", { method: "POST", body: fd });
+        if (data.status === "ok") {
+            statusEl.textContent = "✓ " + data.message;
+            statusEl.style.color = "green";
+        } else {
+            statusEl.textContent = "✗ " + data.message;
+            statusEl.style.color = "red";
+        }
+    } catch (e) {
+        statusEl.textContent = "✗ 设置失败";
+        statusEl.style.color = "red";
+    }
+}
+
+// 删除旧的扫描代码，避免重复
+
+// ─── 同步状态轮询 ──────────────────────────────────
+function startSyncPoll() {
+    if (syncPollTimer) clearInterval(syncPollTimer);
+    pollSyncStatus();  // 立即执行一次
+    syncPollTimer = setInterval(pollSyncStatus, 1000);
+}
+
+async function pollSyncStatus() {
+    try {
+        const [wifiStatus, adbStatus, serverStatus, refreshStatus] = await Promise.all([
+            fetchJSON("/api/wifi/status"),
+            fetchJSON("/api/adb/status"),
+            fetchJSON("/api/status"),
+            fetchJSON("/api/settings/scan-status")
+        ]);
+
+        wifiStatusErrorStreak = 0;
+
+        const syncDot = document.getElementById("sync-dot");
+        const syncStatusText = document.getElementById("sync-status-text");
+        const syncProgressArea = document.getElementById("sync-progress-area");
+
+        activeWifiSyncPhase = wifiStatus.phase || "";
+        activeWifiSyncMode = getEffectiveWifiMode(wifiStatus);
+        markWifiStoppingIfNeeded();
+
+        if (!wifiStatus.running && (activeWifiSyncPhase === "" || activeWifiSyncPhase === "done")) {
+            resetWifiSyncUiState();
+        }
+
+        updateSyncActionButtons();
+        renderWifiSyncLog(wifiStatus.phone_log || wifiStatus.log || []);
+
+        // 始终更新电脑端照片数量
+        document.getElementById("sync-pc-total").textContent = serverStatus.total_synced || 0;
+        const effectiveMode = getEffectiveWifiMode(wifiStatus);
+        const modeText = effectiveMode === "full"
+            ? "全量"
+            : (effectiveMode === "incremental" ? "增量" : "-");
+        document.getElementById("sync-mode").textContent = modeText;
+
+        // 判断当前同步状态
+        let s = null;
+        let isRunning = false;
+        let syncSource = "";
+
+        if (adbStatus && adbStatus.running) {
+            s = adbStatus;
+            isRunning = true;
+            syncSource = "ADB";
+        } else if (wifiStatus.phase === "preparing_full") {
+            s = {
+                ...wifiStatus,
+                phone_total: refreshStatus.total || 0,
+                need_sync: refreshStatus.total || 0,
+                synced: refreshStatus.scanned || 0,
+                current: refreshStatus.current || wifiStatus.current || "正在刷新数据库...",
+            };
+            isRunning = true;
+            syncSource = "WiFi";
+        } else if (wifiStatus.running) {
+            s = wifiStatus;
+            isRunning = true;
+            syncSource = "WiFi";
+        } else if (wifiStatus.phase === "requested") {
+            s = wifiStatus;
+            isRunning = false;
+            syncSource = "WiFi";
+        } else if (adbStatus && adbStatus.phase === "done" && adbStatus.phone_total > 0) {
+            // ADB 同步刚完成，显示最终结果
+            s = adbStatus;
+            isRunning = false;
+            syncSource = "ADB";
+        } else if (wifiStatus.phase === "done" && wifiStatus.phone_total > 0) {
+            // WiFi 同步刚完成，显示最终结果
+            s = wifiStatus;
+            isRunning = false;
+            syncSource = "WiFi";
+        }
+
+        if (s) {
+            if (s.phase === "preparing_full") {
+                syncDot.className = "dot yellow";
+                syncStatusText.textContent = `全量准备中(${syncSource})`;
+            } else if (s.phase === "requested") {
+                syncDot.className = "dot gray";
+                syncStatusText.textContent = `等待手机响应(${syncSource})`;
+            } else if (isRunning) {
+                syncDot.className = "dot green";
+                syncStatusText.textContent = `同步中(${syncSource}): ${s.device || "未知设备"}`;
+            } else {
+                syncDot.className = "dot gray";
+                syncStatusText.textContent = `同步完成(${syncSource}): ${s.device || "未知设备"}`;
+            }
+            syncProgressArea.style.display = "";
+
+            // 动态显示速度单位 (>=1MB显示MB/s，否则显示KB/s)
+            function formatSpeed(mbSpeed, running = false, done = 0) {
+                const v = Number(mbSpeed || 0);
+                if (v >= 1) {
+                    return v.toFixed(1) + " MB/s";
+                } else if (v > 0) {
+                    return (v * 1024).toFixed(0) + " KB/s";
+                }
+                if (!running) return "--";
+                return done > 0 ? "0 KB/s" : "等待首个文件...";
+            }
+
+            // 更新同步统计数据
+            document.getElementById("sync-scanned").textContent = s.phone_total || 0;
+            document.getElementById("sync-need-sync").textContent = s.phone_total || 0;
+            document.getElementById("sync-synced").textContent = s.synced || 0;
+            const done = (s.synced || 0) + (s.skipped || 0) + (s.failed || 0);
+            document.getElementById("sync-speed").textContent = formatSpeed(s.speed, isRunning, done);
+
+            // 进度条
+            const needSync = s.need_sync || 1;
+            const pct = needSync > 0 ? Math.round(done * 100 / needSync) : (s.need_sync === 0 ? 100 : 0);
+            document.getElementById("sync-progress-bar").style.width = pct + "%";
+
+            // 进度文本
+            if (s.phase === "preparing_full") {
+                const scanned = s.synced || 0;
+                const total = s.need_sync || 0;
+                document.getElementById("sync-progress-text").textContent =
+                    `正在刷新数据库 ${scanned}/${total} | 当前: ${s.current || "..."}`;
+            } else if (s.phase === "requested") {
+                document.getElementById("sync-progress-text").textContent =
+                    s.current || "已发送同步请求，等待手机开始扫描...";
+            } else if (isRunning) {
+                document.getElementById("sync-progress-text").textContent =
+                    `上传进度: ${done}/${s.need_sync || 0} (${pct}%) | 当前: ${s.current || "..."}`;
+            } else {
+                document.getElementById("sync-progress-text").textContent =
+                    `上传完成: ${done}/${s.need_sync || 0} | ${s.current || "同步完成"}`;
+            }
+        } else {
+            syncDot.className = "dot gray";
+            syncStatusText.textContent = "等待同步...";
+            syncProgressArea.style.display = "none";
+            document.getElementById("sync-scanned").textContent = "-";
+            document.getElementById("sync-need-sync").textContent = "-";
+            document.getElementById("sync-synced").textContent = "-";
+            document.getElementById("sync-mode").textContent = "-";
+            document.getElementById("sync-speed").textContent = "--";
+        }
+    } catch (e) {
+        console.error("轮询状态失败:", e);
+        wifiStatusErrorStreak += 1;
+        if (wifiStatusErrorStreak >= WIFI_STATUS_ERROR_RESET_THRESHOLD) {
+            resetWifiSyncUiState();
+            updateSyncActionButtons();
+        }
+    }
+}
+
+function renderWifiSyncLog(logs) {
+    const logEl = document.getElementById("wifi-sync-log");
+    if (!logEl) return;
+
+    if (!Array.isArray(logs) || logs.length === 0) {
+        if (lastWifiLogSnapshot !== "__empty__") {
+            logEl.textContent = "等待同步日志...";
+            lastWifiLogSnapshot = "__empty__";
+        }
+        return;
+    }
+
+    const snapshot = logs.join("\n");
+    if (snapshot === lastWifiLogSnapshot) {
+        return;
+    }
+
+    logEl.textContent = snapshot;
+    logEl.scrollTop = logEl.scrollHeight;
+    lastWifiLogSnapshot = snapshot;
+}
+
+// ─── 初始化 ──────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+    const pathInput = document.getElementById("storage-path-input");
+    if (pathInput) pathInput.addEventListener("input", () => { pathInput._userEdited = true; });
+});
+
+loadStatus();
+refreshDevices();
+loadConnectionStatus();
+loadPhotos();
+startSyncPoll();
+setInterval(() => { loadStatus(); loadConnectionStatus(); loadPhotos(); }, 5000);

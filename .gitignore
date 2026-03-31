@@ -3,7 +3,9 @@ android/
 PhotoSync.apk
 PhotoSync.code-workspace
 MIGRATION_CHANGES.md
+RELEASE_GUIDE.md
 sync.ffs_db
+memo.md
 
 # Python 相关
 __pycache__/

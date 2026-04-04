@@ -152,8 +152,7 @@ def find_available_port(start_port: int, max_tries: int = 30) -> Optional[int]:
 
 # 启动时验证存储路径，无效则回退到默认路径
 try:
-    _startup_storage = config.storage_path
-    del _startup_storage
+    _ = config.storage_path
 except (OSError, FileNotFoundError):
     print(f"[警告] 存储路径无效: {config.storage_path}，使用默认路径")
     config.data["storage_path"] = str(DEFAULT_STORAGE)
@@ -425,6 +424,7 @@ db = SyncDB(DB_FILE, DB_JSON_FILE)
 def _verify_and_clean_db():
     """验证数据库记录，删除实际不存在的文件记录"""
     photos_dir = get_photos_dir()
+    to_delete = []
 
     with db.lock:
         with db._get_connection() as conn:

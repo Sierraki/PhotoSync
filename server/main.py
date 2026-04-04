@@ -83,8 +83,15 @@ class Config:
 
     @property
     def adb_executable(self) -> str:
-        # 使用内置 ADB
-        builtin_adb = Path(__file__).parent.parent / "ADB" / "adb.exe"
+        # 用户自定义 ADB 路径优先
+        custom_path = str(self.data.get("adb_path") or "").strip()
+        if custom_path and Path(custom_path).exists():
+            return custom_path
+        # 使用内置 ADB（PyInstaller 打包时相对于 EXE 目录，开发时相对于项目根目录）
+        if getattr(sys, 'frozen', False):
+            builtin_adb = EXE_DIR / "ADB" / "adb.exe"
+        else:
+            builtin_adb = BASE_DIR.parent / "ADB" / "adb.exe"
         if builtin_adb.exists():
             return str(builtin_adb)
         # 备用：尝试系统 PATH 中的 adb
@@ -145,12 +152,12 @@ def find_available_port(start_port: int, max_tries: int = 30) -> Optional[int]:
 
 # 启动时验证存储路径，无效则回退到默认路径
 try:
-    PHOTOS_DIR = config.storage_path
+    _startup_storage = config.storage_path
+    del _startup_storage
 except (OSError, FileNotFoundError):
     print(f"[警告] 存储路径无效: {config.storage_path}，使用默认路径")
     config.data["storage_path"] = str(DEFAULT_STORAGE)
     config.save()
-    PHOTOS_DIR = config.storage_path
 
 
 # ─── 哈希工具（使用 SHA-256 替代 MD5）─────────────────────
@@ -418,7 +425,6 @@ db = SyncDB(DB_FILE, DB_JSON_FILE)
 def _verify_and_clean_db():
     """验证数据库记录，删除实际不存在的文件记录"""
     photos_dir = get_photos_dir()
-    removed = 0
 
     with db.lock:
         with db._get_connection() as conn:
@@ -426,12 +432,26 @@ def _verify_and_clean_db():
             cursor.execute("SELECT album, sha256, filename FROM files")
             rows = cursor.fetchall()
 
-            for album, sha256, filename in rows:
-                file_path = photos_dir / album / filename
-                if not file_path.exists():
-                    db.remove_from_album(album, sha256)
-                    removed += 1
+            to_delete = [
+                (album, sha256)
+                for album, sha256, filename in rows
+                if not (photos_dir / album / filename).exists()
+            ]
 
+            if to_delete:
+                cursor.executemany(
+                    "DELETE FROM files WHERE album = ? AND sha256 = ?",
+                    to_delete,
+                )
+                cursor.execute("SELECT COUNT(*) FROM files")
+                total = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT OR REPLACE INTO stats VALUES ('total', ?)",
+                    (str(total),),
+                )
+                conn.commit()
+
+    removed = len(to_delete)
     if removed > 0:
         print(f"[数据库] 清理了 {removed} 个不存在的文件记录")
 
@@ -845,8 +865,7 @@ def _run_adb_sync(serial: str, device_name: str):
             if part in ("DCIM", "Pictures") and j + 1 < len(parts):
                 album = parts[j + 1]
                 break
-        if album == "Camera":
-            album = "Camera"
+        # album now holds the resolved album name (e.g. "Camera", "Pictures")
 
         # 相册内去重检查
         if is_in_album_synced(album, file_hash):
@@ -1273,14 +1292,13 @@ def scan_local_photos():
     scan_progress["log"] = [f"开始扫描: {photos_dir}"]
 
     # 收集所有图片文件
-    extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".mp4", ".mov", ".avi"}
     local_files = {}  # (album, sha256) -> {filename, size, mtime}
     all_files = []
 
     for root, _dirs, files in os.walk(str(photos_dir)):
         for f in files:
             ext = Path(f).suffix.lower()
-            if ext in extensions:
+            if ext in PHOTO_EXTS:
                 all_files.append(Path(root) / f)
 
     scan_progress["total"] = len(all_files)
@@ -2059,12 +2077,12 @@ async def upload_photo(
         else:
             sub_dir = "unsorted"
 
-        save_dir = photos_dir / sub_dir
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        # 相册名规范化（防止路径遍历攻击）
+        # 相册名规范化（防止路径遍历攻击）——必须在创建目录前校验
         if ".." in sub_dir or sub_dir.startswith("/"):
             return {"status": "error", "message": "非法的相册名"}
+
+        save_dir = photos_dir / sub_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
 
         # 客户端哈希只用于电脑端预检查，最终仍以电脑端实算 SHA-256 为准
         candidate_hashes = normalize_client_hashes(file_hash)

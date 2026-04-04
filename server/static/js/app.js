@@ -27,6 +27,9 @@ function addWifiSyncLogMessage(msg) {
 
 async function fetchJSON(url, options) {
     const resp = await fetch(url, options);
+    if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
     return resp.json();
 }
 
@@ -324,21 +327,6 @@ async function browseFolder() {
     }
 }
 
-async function browseAdbFolder() {
-    try {
-        const data = await fetchJSON("/api/settings/browse", { method: "POST" });
-        if (data.status === "ok" && data.path) {
-            document.getElementById("adb-path-input").value = data.path;
-        } else if (data.status === "cancelled") {
-            // 用户取消了选择，不做任何事
-        } else {
-            alert("无法打开文件夹选择器，请手动输入路径");
-        }
-    } catch (e) {
-        alert("浏览文件夹失败，请手动输入路径");
-    }
-}
-
 async function savePath() {
     const path = document.getElementById("storage-path-input").value.trim();
     if (!path) {
@@ -439,19 +427,6 @@ async function scanLocalDatabase() {
         statusEl.style.color = "red";
         btn.disabled = false;
         btn.textContent = "刷新数据库";
-    }
-}
-
-async function saveAdbPath() {
-    const path = document.getElementById("adb-path-input").value.trim();
-    try {
-        const fd = new FormData();
-        fd.append("path", path);
-        const data = await fetchJSON("/api/settings/adb_path", { method: "POST", body: fd });
-        alert(data.message || "保存成功");
-        loadStatus();
-    } catch (e) {
-        alert("保存失败");
     }
 }
 

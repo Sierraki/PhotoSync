@@ -17,6 +17,46 @@ body {
     padding: 24px 16px;
 }
 
+/* 两栏布局容器 */
+.two-column-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+/* 不对称四格布局 */
+.asymmetric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 20px;
+    margin-bottom: 20px;
+    grid-template-areas:
+        "connect connection"
+        "settings syncstatus";
+}
+
+/* 三栏布局容器 */
+.three-column-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.three-column-layout>.panel {
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* 右栏容器，用于堆叠多个面板 */
+.right-column {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
 header {
     text-align: center;
     margin-bottom: 24px;
@@ -100,6 +140,17 @@ header h1 {
     align-items: flex-start;
 }
 
+/* 两栏布局中的连接面板调整 */
+.two-column-layout .connect-panel .connect-grid {
+    flex-direction: column;
+    gap: 16px;
+}
+
+.two-column-layout .connect-panel .connect-right {
+    text-align: center;
+    align-self: center;
+}
+
 .connect-left {
     flex: 1;
 }
@@ -119,7 +170,7 @@ header h1 {
 .address-box {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     background: #f0f7ff;
     border: 2px solid #2563eb;
     border-radius: 8px;
@@ -137,11 +188,6 @@ header h1 {
     font-weight: 700;
     color: #1d4ed8;
     letter-spacing: 0.5px;
-}
-
-.copy-hint {
-    font-size: 12px;
-    color: #6b7280;
 }
 
 .copy-toast {
@@ -226,6 +272,7 @@ header h1 {
 .input-group {
     display: flex;
     gap: 8px;
+    align-items: center;
 }
 
 .input-group input {
@@ -286,6 +333,13 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     font-size: 12px;
     color: #9ca3af;
     margin-top: 6px;
+    display: flex;
+    align-items: center;
+}
+
+.input-group .hint {
+    margin-top: 0;
+    font-size: 12px;
 }
 
 /* USB 面板 */
@@ -350,11 +404,10 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     padding: 8px 12px;
     font-size: 12px;
     color: #6b7280;
-    max-height: 200px;
+    height: 300px;
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-all;
-    margin-top: 8px;
 }
 
 /* 按钮 */
@@ -464,6 +517,23 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         flex-direction: column;
     }
 
+    .two-column-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .asymmetric-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "connect"
+            "settings"
+            "connection"
+            "syncstatus";
+    }
+
+    .three-column-layout {
+        grid-template-columns: 1fr;
+    }
+
     .qrcode {
         width: 140px;
         height: 140px;
@@ -550,12 +620,7 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 
 /* 本次同步照片面板 */
 .recent-photos-panel {
-    padding: 12px 20px;
-}
-
-.recent-photos-panel h2 {
-    font-size: 14px;
-    margin-bottom: 8px;
+    padding: 20px 24px;
 }
 
 .recent-photos-list {

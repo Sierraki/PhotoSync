@@ -226,9 +226,13 @@ async function loadStatus() {
     try {
         const data = await fetchJSON("/api/status");
         document.getElementById("server-url").textContent = data.server_url;
-        document.getElementById("total-synced").textContent = data.total_synced;
-        document.getElementById("last-sync").textContent =
-            data.last_sync ? new Date(data.last_sync).toLocaleString("zh-CN") : "从未";
+
+        // 这两个元素已被删除，添加 null 检查
+        const totalSyncedEl = document.getElementById("total-synced");
+        if (totalSyncedEl) totalSyncedEl.textContent = data.total_synced;
+
+        const lastSyncEl = document.getElementById("last-sync");
+        if (lastSyncEl) lastSyncEl.textContent = data.last_sync ? new Date(data.last_sync).toLocaleString("zh-CN") : "从未";
 
         // 更新同步状态面板的电脑端照片数量
         document.getElementById("sync-pc-total").textContent = data.total_synced;
@@ -237,13 +241,15 @@ async function loadStatus() {
         const altUrls = data.all_urls || [];
         const altArea = document.getElementById("alt-urls");
         const altList = document.getElementById("alt-urls-list");
-        if (altUrls.length > 1) {
-            altArea.style.display = "";
-            altList.innerHTML = altUrls.slice(1).map(u =>
-                `<span class="alt-url" onclick="switchUrl('${u}')" title="点击切换">${u}</span>`
-            ).join("");
-        } else {
-            altArea.style.display = "none";
+        if (altArea && altList) {
+            if (altUrls.length > 1) {
+                altArea.style.display = "";
+                altList.innerHTML = altUrls.slice(1).map(u =>
+                    `<span class="alt-url" onclick="switchUrl('${u}')" title="点击切换">${u}</span>`
+                ).join("");
+            } else {
+                altArea.style.display = "none";
+            }
         }
 
         // 存储路径
@@ -252,7 +258,10 @@ async function loadStatus() {
 
         // 服务器端口
         const portInput = document.getElementById("server-port-input");
-        if (!portInput._userEdited) portInput.value = data.server_port || 8920;
+        const currentPort = data.server_port || 8920;
+        if (!portInput._userEdited) {
+            portInput.value = currentPort;
+        }
 
         // ADB 路径（已移除，使用内置 ADB）
 
@@ -286,16 +295,40 @@ async function loadPhotos() {
 // ─── 复制地址 ──────────────────────────────────
 function copyAddress() {
     const url = document.getElementById("server-url").textContent;
-    navigator.clipboard.writeText(url).then(() => {
+    if (!url || url === "加载中...") {
+        alert("地址加载中，请稍候");
+        return;
+    }
+
+    // 使用传统的复制方法，兼容 HTTP 环境
+    const textarea = document.createElement("textarea");
+    textarea.value = url;
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand("copy");
         const toast = document.getElementById("copy-toast");
         toast.classList.add("show");
         setTimeout(() => toast.classList.remove("show"), 2000);
-    });
+        console.log("已复制:", url);
+    } catch (err) {
+        console.error("复制失败:", err);
+        alert("复制失败: " + err.message);
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 function switchUrl(url) {
     document.getElementById("server-url").textContent = url;
-    navigator.clipboard.writeText(url).then(() => {
+
+    // 使用传统的复制方法，兼容 HTTP 环境
+    const textarea = document.createElement("textarea");
+    textarea.value = url;
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand("copy");
         const toast = document.getElementById("copy-toast");
         toast.textContent = "已切换并复制: " + url;
         toast.classList.add("show");
@@ -303,7 +336,11 @@ function switchUrl(url) {
             toast.classList.remove("show");
             toast.textContent = "已复制到剪贴板";
         }, 2000);
-    });
+    } catch (err) {
+        console.error("复制失败:", err);
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 // ─── 设置 ──────────────────────────────────
@@ -389,6 +426,8 @@ async function savePort() {
         fd.append("port", port.toString());
         const data = await fetchJSON("/api/settings/port", { method: "POST", body: fd });
         addWifiSyncLogMessage(data.message || (data.status === "ok" ? "保存成功" : "保存失败"));
+        document.getElementById("server-port-input")._userEdited = false;
+        loadStatus();
     } catch (e) {
         alert("保存失败: " + e.message);
     }
@@ -775,6 +814,9 @@ function renderWifiSyncLog(logs) {
 document.addEventListener("DOMContentLoaded", () => {
     const pathInput = document.getElementById("storage-path-input");
     if (pathInput) pathInput.addEventListener("input", () => { pathInput._userEdited = true; });
+
+    const portInput = document.getElementById("server-port-input");
+    if (portInput) portInput.addEventListener("input", () => { portInput._userEdited = true; });
 });
 
 loadStatus();

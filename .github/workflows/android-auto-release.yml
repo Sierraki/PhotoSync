@@ -121,6 +121,15 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
+      - name: Rename APK to PhotoSync.apk
+        if: steps.tagcheck.outputs.skip != 'true'
+        run: |
+          set -e
+          apk_dir="android/app/build/outputs/apk/release"
+          apk_path=$(ls -1 "$apk_dir"/*.apk | head -n 1)
+          echo "Found APK: $apk_path"
+          cp "$apk_path" "$apk_dir/PhotoSync.apk"
+
       - name: Create GitHub Release
         if: steps.tagcheck.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
@@ -130,4 +139,4 @@ jobs:
           body_path: release_body.md
           draft: false
           files: |
-            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/release/PhotoSync.apk

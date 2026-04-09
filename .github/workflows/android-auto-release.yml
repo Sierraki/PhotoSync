@@ -83,6 +83,8 @@ jobs:
       - name: Setup Gradle
         if: steps.tagcheck.outputs.skip != 'true'
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
 
       - name: Assemble Release APK
         if: steps.tagcheck.outputs.skip != 'true'

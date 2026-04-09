@@ -86,10 +86,40 @@ jobs:
         with:
           gradle-version: '8.4'
 
+      - name: Verify signing secrets
+        if: steps.tagcheck.outputs.skip != 'true'
+        run: |
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "Missing secret: ANDROID_KEYSTORE_BASE64"
+            exit 1
+          fi
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ]; then
+            echo "Missing secret: ANDROID_KEYSTORE_PASSWORD"
+            exit 1
+          fi
+          if [ -z "${{ secrets.ANDROID_KEY_ALIAS }}" ]; then
+            echo "Missing secret: ANDROID_KEY_ALIAS"
+            exit 1
+          fi
+          if [ -z "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Missing secret: ANDROID_KEY_PASSWORD"
+            exit 1
+          fi
+
+      - name: Decode keystore
+        if: steps.tagcheck.outputs.skip != 'true'
+        run: |
+          printf '%s' "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/release.keystore
+
       - name: Assemble Release APK
         if: steps.tagcheck.outputs.skip != 'true'
         run: |
           gradle -p android :app:assembleRelease
+        env:
+          SIGNING_STORE_FILE: ${{ github.workspace }}/android/release.keystore
+          SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Create GitHub Release
         if: steps.tagcheck.outputs.skip != 'true'
@@ -98,6 +128,6 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.title }}
           body_path: release_body.md
-          draft: true
+          draft: false
           files: |
             android/app/build/outputs/apk/release/*.apk

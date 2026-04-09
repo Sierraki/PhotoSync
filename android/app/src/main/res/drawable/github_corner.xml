@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 右上角黑色三角 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#181717" />
+        </shape>
+    </item>
+
+    <!-- 裁剪掉左下部分，形成右上角三角 -->
+    <item
+        android:left="0dp"
+        android:top="0dp"
+        android:right="30dp"
+        android:bottom="30dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#F0F2F5" />
+        </shape>
+    </item>
+</layer-list>

@@ -21,8 +21,8 @@ body {
 .two-column-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 5px;
 }
 
 /* 不对称四格布局 */
@@ -30,8 +30,8 @@ body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto;
-    gap: 20px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 5px;
     grid-template-areas:
         "connect connection"
         "settings syncstatus";
@@ -41,8 +41,8 @@ body {
 .three-column-layout {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 5px;
 }
 
 .three-column-layout>.panel {
@@ -54,7 +54,7 @@ body {
 .right-column {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 12px;
 }
 
 header {
@@ -112,9 +112,9 @@ header h1 {
 }
 
 .desc {
-    font-size: 13px;
+    font-size: 12px;
     color: #6b7280;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
 }
 
 /* 面板 */
@@ -122,7 +122,7 @@ header h1 {
     background: #fff;
     border-radius: 12px;
     padding: 20px 24px;
-    margin-bottom: 20px;
+    margin-bottom: 5px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
@@ -136,33 +136,24 @@ header h1 {
 /* 连接面板 */
 .connect-grid {
     display: flex;
-    gap: 24px;
+    gap: 10px;
     align-items: flex-start;
-}
-
-/* 两栏布局中的连接面板调整 */
-.two-column-layout .connect-panel .connect-grid {
-    flex-direction: column;
-    gap: 16px;
-}
-
-.two-column-layout .connect-panel .connect-right {
-    text-align: center;
-    align-self: center;
 }
 
 .connect-left {
     flex: 1;
+    min-width: 0;
 }
 
 .connect-right {
     text-align: center;
     flex-shrink: 0;
+    margin-top: -50px;
 }
 
 .qrcode {
-    width: 180px;
-    height: 180px;
+    width: 120px;
+    height: 120px;
     border: 2px solid #e5e7eb;
     border-radius: 8px;
 }
@@ -174,7 +165,7 @@ header h1 {
     background: #f0f7ff;
     border: 2px solid #2563eb;
     border-radius: 8px;
-    padding: 14px 18px;
+    padding: 8px 12px;
     cursor: pointer;
     transition: background 0.2s;
 }
@@ -184,7 +175,7 @@ header h1 {
 }
 
 .address-box span:first-child {
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 700;
     color: #1d4ed8;
     letter-spacing: 0.5px;
@@ -455,6 +446,23 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     background: #dc2626;
 }
 
+/* 连接方式按钮状态 */
+.btn.btn-success {
+    background: #22c55e;
+}
+
+.btn.btn-success:hover {
+    background: #16a34a;
+}
+
+.btn.btn-failed {
+    background: #ef4444;
+}
+
+.btn.btn-failed:hover {
+    background: #dc2626;
+}
+
 /* 照片 */
 .badge {
     display: inline-block;
@@ -596,18 +604,39 @@ box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 .connection-status-row {
     display: flex;
     align-items: center;
-    gap: 24px;
+    justify-content: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .connection-status-row .stat-item {
     display: flex;
-    flex-direction: column;
+    align-items: center;
     gap: 4px;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.connection-status-row .stat-label {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.connection-status-row .stat-value {
+    color: #1f2937;
+    font-weight: 600;
 }
 
 .sync-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.sync-actions .btn {
+    padding: 6px 12px;
+    font-size: 12px;
 }
 
 .sync-actions .btn.btn-stop {

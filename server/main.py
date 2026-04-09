@@ -609,23 +609,42 @@ def get_adb_devices(include_emulators: bool = False) -> list[dict]:
 def setup_adb_reverse(serial: Optional[str] = None) -> bool:
     """为指定设备设置 ADB reverse 端口转发，返回是否成功"""
     try:
-        port = get_server_port()
-        if serial:
+        host_port = int(get_server_port())
+
+        # Android 端 USB/ADB 模式历史默认使用 localhost:8920。
+        # 为了兼容“服务器实际运行端口 != 8920”的情况，增加 8920 -> host_port 的跨端口 reverse。
+        legacy_device_port = 8920
+
+        mappings: list[tuple[int, int]] = []
+        if host_port != legacy_device_port:
+            mappings.append((legacy_device_port, host_port))
+        # 同端口映射也保留：当手机端配置为与服务端一致的端口时仍可用。
+        mappings.append((host_port, host_port))
+
+        adb_prefix = ["-s", serial] if serial else []
+
+        all_ok = True
+        for device_port, target_port in mappings:
+            # 先尝试移除旧映射，避免重复/冲突（移除失败不影响后续设置）
+            try:
+                _run_adb(*adb_prefix, "reverse", "--remove", f"tcp:{device_port}", timeout=5)
+            except Exception:
+                pass
+
             result = _run_adb(
-                "-s",
-                serial,
+                *adb_prefix,
                 "reverse",
-                f"tcp:{port}",
-                f"tcp:{port}",
-                timeout=5)
-        else:
-            result = _run_adb("reverse", f"tcp:{port}", f"tcp:{port}", timeout=5)
-        success = result.returncode == 0
-        if success:
-            print(f"ADB reverse 端口转发已设置: tcp:{port} -> tcp:{port}")
-        else:
-            print(f"ADB reverse 设置失败: {result.stderr}")
-        return success
+                f"tcp:{device_port}",
+                f"tcp:{target_port}",
+                timeout=5,
+            )
+            if result.returncode == 0:
+                print(f"ADB reverse 端口转发已设置: tcp:{device_port} -> tcp:{target_port}")
+            else:
+                all_ok = False
+                print(f"ADB reverse 设置失败 (tcp:{device_port} -> tcp:{target_port}): {result.stderr}")
+
+        return all_ok
     except Exception as e:
         print(f"ADB reverse 设置异常: {e}")
         return False
@@ -1062,9 +1081,16 @@ async def set_server_port(port: str = Form("")):
         config.data["server_port"] = p
         config.save()
         print(f"[设置] 端口已保存为: {p}")
+
+        # 更新 ADB 端口转发
+        if check_adb():
+            devices = get_adb_devices()
+            for device in devices:
+                setup_adb_reverse(device.get("serial", device))
+
         return {
             "status": "ok",
-            "message": f"端口已保存为 {p}。状态页会立即显示新端口，服务监听端口需重启后生效"
+            "message": f"端口已保存为 {p}。ADB 端口转发已更新，WiFi 连接需要手机重新连接"
         }
     except Exception as e:
         print(f"[错误] 保存端口失败: {e}")
@@ -1220,7 +1246,11 @@ async def test_connection(conn_type: str = Form(...), device_serial: str = Form(
         try:
             result = _run_adb("-s", device_serial, "shell", "echo", "ok", timeout=5)
             if result.returncode == 0 and "ok" in result.stdout:
-                return {"status": "ok", "message": f"ADB 连接正常 ({device_serial})"}
+                # 顺便设置 reverse，确保手机端 USB 模式可通过 localhost:<port> 访问到 PC 服务
+                reverse_ok = setup_adb_reverse(device_serial)
+                if reverse_ok:
+                    return {"status": "ok", "message": f"ADB 连接正常，端口转发已设置 ({device_serial})"}
+                return {"status": "error", "message": f"ADB 连接正常，但端口转发设置失败 ({device_serial})"}
             else:
                 return {"status": "error", "message": "设备无响应"}
         except subprocess.TimeoutExpired:

@@ -1,5 +1,6 @@
 let syncPollTimer = null;
 let selectedDeviceSerial = "";
+let pendingAdbDeviceSelection = false;
 let activeWifiSyncMode = "";
 let activeWifiSyncPhase = "";
 let lastWifiLogSnapshot = "";
@@ -160,7 +161,17 @@ function getEffectiveWifiMode(status) {
 }
 
 async function requestSync(mode = "incremental") {
-    const connType = document.getElementById("connection-type-select").value;
+    // 获取当前选中的连接方式（WiFi 还是 ADB）
+    const btnWifi = document.getElementById("btn-wifi");
+    const btnAdb = document.getElementById("btn-adb");
+    let connType = "wifi"; // 默认 WiFi
+
+    if (btnAdb?.classList.contains("btn-success")) {
+        connType = "adb";
+    } else if (btnWifi?.classList.contains("btn-success")) {
+        connType = "wifi";
+    }
+
     const normalizedMode = mode === "full" ? "full" : "incremental";
     const btnInc = document.getElementById("btn-sync-incremental");
     const btnFull = document.getElementById("btn-sync-full");
@@ -525,6 +536,12 @@ function onDeviceSelected() {
     const selectEl = document.getElementById("adb-device-select");
     selectedDeviceSerial = selectEl.value;
     console.log("选中设备:", selectedDeviceSerial);
+
+    // 仅在“点击了 ADB 测试按钮后等待用户选择设备”的场景下，才自动触发连接测试。
+    if (pendingAdbDeviceSelection && selectedDeviceSerial) {
+        pendingAdbDeviceSelection = false;
+        performConnectionTest("adb", selectedDeviceSerial);
+    }
 }
 
 // ─── 连接方式选择 ──────────────────────────────────
@@ -678,6 +695,10 @@ async function pollSyncStatus() {
         let isRunning = false;
         let syncSource = "";
 
+        const wifiLinkType = (wifiStatus.connection_type || "wifi").toString().toLowerCase() === "adb"
+            ? "ADB"
+            : "WiFi";
+
         if (adbStatus && adbStatus.running) {
             s = adbStatus;
             isRunning = true;
@@ -691,15 +712,15 @@ async function pollSyncStatus() {
                 current: refreshStatus.current || wifiStatus.current || "正在刷新数据库...",
             };
             isRunning = true;
-            syncSource = "WiFi";
+            syncSource = wifiLinkType;
         } else if (wifiStatus.running) {
             s = wifiStatus;
             isRunning = true;
-            syncSource = "WiFi";
+            syncSource = wifiLinkType;
         } else if (wifiStatus.phase === "requested") {
             s = wifiStatus;
             isRunning = false;
-            syncSource = "WiFi";
+            syncSource = wifiLinkType;
         } else if (adbStatus && adbStatus.phase === "done" && adbStatus.phone_total > 0) {
             // ADB 同步刚完成，显示最终结果
             s = adbStatus;
@@ -709,7 +730,7 @@ async function pollSyncStatus() {
             // WiFi 同步刚完成，显示最终结果
             s = wifiStatus;
             isRunning = false;
-            syncSource = "WiFi";
+            syncSource = wifiLinkType;
         }
 
         if (s) {
@@ -808,6 +829,148 @@ function renderWifiSyncLog(logs) {
     logEl.textContent = snapshot;
     logEl.scrollTop = logEl.scrollHeight;
     lastWifiLogSnapshot = snapshot;
+}
+
+// ─── 测试连接 ──────────────────────────────────
+async function testConnectionType(type) {
+    const btnWifi = document.getElementById("btn-wifi");
+    const btnAdb = document.getElementById("btn-adb");
+    const statusEl = document.getElementById("connection-test-status");
+
+    // 如果是 ADB，先弹出设备选择
+    if (type === "adb") {
+        await showAdbDeviceSelector();
+        return;
+    }
+
+    // WiFi 模式直接测试
+    performConnectionTest(type, "");
+}
+
+async function showAdbDeviceSelector() {
+    const statusEl = document.getElementById("connection-test-status");
+    statusEl.textContent = "正在刷新设备列表...";
+    statusEl.style.color = "#6b7280";
+
+    const usbSettings = document.getElementById("usb-settings");
+    if (usbSettings) {
+        usbSettings.style.display = "flex";
+    }
+
+    const selectEl = document.getElementById("adb-device-select");
+    if (selectEl) {
+        selectEl.innerHTML = '<option value="">-- 选择设备 --</option>';
+    }
+
+    try {
+        // 调用刷新设备列表
+        const resp = await fetch("/api/adb/devices");
+        const data = await resp.json();
+
+        if (!data.devices || data.devices.length === 0) {
+            statusEl.textContent = "✗ 未找到设备，请确保手机已连接";
+            statusEl.style.color = "#ef4444";
+            pendingAdbDeviceSelection = false;
+            if (selectEl) {
+                selectEl.innerHTML = '<option value="">-- 未检测到设备 --</option>';
+            }
+            return;
+        }
+
+        // 如果只有一个设备，直接使用
+        if (data.devices.length === 1) {
+            const deviceSerial = data.devices[0].serial || data.devices[0];
+            pendingAdbDeviceSelection = false;
+            if (selectEl) {
+                const label = data.devices[0].model
+                    ? `${data.devices[0].model} (${deviceSerial})`
+                    : deviceSerial;
+                selectEl.innerHTML = `<option value="${deviceSerial}">${label}</option>`;
+                selectEl.value = deviceSerial;
+            }
+            performConnectionTest("adb", deviceSerial);
+            return;
+        }
+
+        // 多个设备：在页面内联展示下拉选择（不使用 prompt 弹窗）
+        pendingAdbDeviceSelection = true;
+        statusEl.textContent = "请选择要使用的 ADB 设备（选择后会自动测试连接）";
+        statusEl.style.color = "#6b7280";
+
+        if (selectEl) {
+            selectEl.innerHTML = '<option value="">-- 选择设备 --</option>';
+            for (const dev of data.devices) {
+                const serial = dev.serial || dev;
+                const label = dev.model ? `${dev.model} (${serial})` : serial;
+                const option = document.createElement("option");
+                option.value = serial;
+                option.textContent = label;
+                if (serial === selectedDeviceSerial) {
+                    option.selected = true;
+                }
+                selectEl.appendChild(option);
+            }
+            selectEl.focus();
+        }
+    } catch (e) {
+        statusEl.textContent = `✗ 获取设备列表失败: ${e.message}`;
+        statusEl.style.color = "#ef4444";
+        pendingAdbDeviceSelection = false;
+    }
+}
+
+async function performConnectionTest(type, deviceSerial) {
+    const btnWifi = document.getElementById("btn-wifi");
+    const btnAdb = document.getElementById("btn-adb");
+    const statusEl = document.getElementById("connection-test-status");
+
+    // 重置按钮状态
+    btnWifi?.classList.remove("btn-success", "btn-failed");
+    btnAdb?.classList.remove("btn-success", "btn-failed");
+    statusEl.textContent = "测试连接中...";
+    statusEl.style.color = "#6b7280";
+
+    try {
+        const fd = new FormData();
+        fd.append("conn_type", type);
+        fd.append("device_serial", deviceSerial || "");
+
+        const resp = await fetch("/api/test-connection", {
+            method: "POST",
+            body: fd
+        });
+        const data = await resp.json();
+
+        if (data.status === "ok") {
+            // 测试成功
+            const activeBtn = type === "adb" ? btnAdb : btnWifi;
+            const inactiveBtn = type === "adb" ? btnWifi : btnAdb;
+
+            activeBtn?.classList.remove("btn-failed");
+            activeBtn?.classList.add("btn-success");
+            inactiveBtn?.classList.remove("btn-success");
+            inactiveBtn?.classList.add("btn-failed");
+
+            statusEl.textContent = `✓ ${data.message}`;
+            statusEl.style.color = "#22c55e";
+        } else {
+            // 测试失败
+            const btn = type === "adb" ? btnAdb : btnWifi;
+            btn?.classList.remove("btn-success");
+            btn?.classList.add("btn-failed");
+
+            statusEl.textContent = `✗ ${data.message || "连接失败"}`;
+            statusEl.style.color = "#ef4444";
+        }
+    } catch (e) {
+        // 测试异常
+        const btn = type === "adb" ? btnAdb : btnWifi;
+        btn?.classList.remove("btn-success");
+        btn?.classList.add("btn-failed");
+
+        statusEl.textContent = `✗ 连接测试异常: ${e.message}`;
+        statusEl.style.color = "#ef4444";
+    }
 }
 
 // ─── 初始化 ──────────────────────────────────

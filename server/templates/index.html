@@ -77,7 +77,6 @@
                     </div>
                     <div class="connect-right">
                         <img id="qrcode-img" src="/api/qrcode" alt="扫码连接" class="qrcode">
-                        <p class="hint">手机扫码连接</p>
                     </div>
                 </div>
             </section>
@@ -87,14 +86,13 @@
                 <h2>设置</h2>
                 <div class="setting-row">
                     <label>连接方式</label>
-                    <div class="input-group">
-                        <select id="connection-type-select" onchange="onConnectionTypeChanged()">
-                            <option value="wifi">WiFi 局域网</option>
-                            <option value="adb">USB ADB</option>
-                        </select>
-                        <button class="btn" onclick="testConnection()">测试连接</button>
-                        <span id="connection-test-status" class="hint"></span>
+                    <div class="input-group" style="gap: 8px;">
+                        <button id="btn-wifi" class="btn" style="flex: 1;" onclick="testConnectionType('wifi')">📡 WiFi
+                            局域网</button>
+                        <button id="btn-adb" class="btn" style="flex: 1;" onclick="testConnectionType('adb')">🔌 有线
+                            ABD</button>
                     </div>
+                    <span id="connection-test-status" class="hint" style="margin-top: 6px;"></span>
                 </div>
                 <div class="setting-row">
                     <label>服务器端口</label>
@@ -203,7 +201,7 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=33"></script>
+    <script src="/static/js/app.js?v=45"></script>
 </body>
 
 </html>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_background">#F0F2F5</color>
+    <color name="panel_background">#F8FAFC</color>
+
+    <color name="brand_primary">#2563EB</color>
+    <color name="brand_primary_container">#DBEAFE</color>
+    <color name="brand_on_primary">#FFFFFF</color>
+
+    <color name="brand_secondary">#7C3AED</color>
+
+    <color name="text_primary">#374151</color>
+    <color name="text_primary_strong">#1F2937</color>
+    <color name="text_secondary">#6B7280</color>
+    <color name="text_muted">#4B5563</color>
+    <color name="text_tertiary">#9CA3AF</color>
+
+    <color name="github_logo">#181717</color>
+</resources>

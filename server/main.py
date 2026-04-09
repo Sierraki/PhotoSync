@@ -56,6 +56,7 @@ class Config:
             "connection_type": "wifi",  # "wifi" 或 "adb"
             "server_port": DEFAULT_SERVER_PORT,
             "upload_rate_limit_kbps": 0,  # 0 表示不限速
+            "ui_theme": "",  # "dark" | "light" | ""(follow system)
             "tls_enabled": False,
             "tls_cert_file": "",
             "tls_key_file": "",
@@ -1036,7 +1037,14 @@ async def enforce_https_middleware(request: Request, call_next):
 # ─── API 路由 ────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    raw_theme = (config.data.get("ui_theme") or "").strip().lower()
+    ui_theme = raw_theme if raw_theme in {"dark", "light"} else ""
+    raw_conn = (config.data.get("connection_type") or "wifi").strip().lower()
+    preferred_conn_type = raw_conn if raw_conn in {"wifi", "adb"} else "wifi"
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "ui_theme": ui_theme, "preferred_conn_type": preferred_conn_type},
+    )
 
 
 @app.get("/api/status")
@@ -1062,12 +1070,24 @@ async def get_status():
         "adb_devices": adb_devices,
         "all_adb_devices": all_adb_devices,
         "connection_type": config.data.get("connection_type", "wifi"),
+        "ui_theme": (config.data.get("ui_theme") or ""),
         "total_synced": total_synced,
         "storage_path": str(get_photos_dir().resolve()),
         "upload_rate_limit_kbps": int(config.data.get("upload_rate_limit_kbps", 0) or 0),
         "tls_enabled": bool(config.data.get("tls_enabled", False)),
         "enforce_https": bool(config.data.get("enforce_https", False)),
     }
+
+
+@app.post("/api/settings/theme")
+async def set_ui_theme(theme: str = Form("")):
+    """保存 Web UI 主题偏好（服务重启后仍生效）。"""
+    t = (theme or "").strip().lower()
+    if t not in {"dark", "light", ""}:
+        return {"status": "error", "message": "theme 必须是 dark 或 light"}
+    config.data["ui_theme"] = t
+    config.save()
+    return {"status": "ok", "message": "主题已保存", "ui_theme": t}
 
 
 @app.get("/api/qrcode")
@@ -1239,13 +1259,17 @@ async def test_connection(conn_type: str = Form(...), device_serial: str = Form(
         with wifi_status_lock:
             connected = wifi_sync_status.get("connected")
             conn_value = wifi_sync_status.get("connection_type", "wifi")
-        if connected:
-            return {
-                "status": "ok",
-                "message": f"WiFi 连接正常 ({conn_value.upper()})"
-            }
-        else:
+        if not connected:
             return {"status": "error", "message": "手机未连接，请在手机端打开 App 连接"}
+
+        # 只有手机实际是 WiFi 连接时，WiFi 测试才算成功；避免出现“WiFi 正常 (ADB)”的误导。
+        if str(conn_value).lower() != "wifi":
+            return {
+                "status": "error",
+                "message": "手机当前为 USB ADB 连接，请选择“有线 ADB”或在手机端重新用 WiFi 连接",
+            }
+
+        return {"status": "ok", "message": "WiFi 连接正常"}
 
     elif conn_type == "adb":
         # ADB 模式：测试设备连接

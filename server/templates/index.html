@@ -1,16 +1,19 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" {% if ui_theme %}data-theme="{{ ui_theme }}" {% endif %}
+    data-preferred-conn="{{ preferred_conn_type }}">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PhotoSync - 相册同步</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=8">
+    <link rel="stylesheet" href="/static/css/style.css?v=9">
 </head>
 
 <body>
     <div class="container">
         <header>
+            <button id="theme-toggle" class="btn btn-secondary btn-sm theme-toggle" type="button"
+                aria-label="切换深色/浅色模式">深色模式</button>
             <h1>PhotoSync</h1>
             <p class="subtitle">手机相册同步管理</p>
 
@@ -87,9 +90,11 @@
                 <div class="setting-row">
                     <label>连接方式</label>
                     <div class="input-group" style="gap: 8px;">
-                        <button id="btn-wifi" class="btn" style="flex: 1;" onclick="testConnectionType('wifi')">WiFi
+                        <button id="btn-wifi" class="btn {% if preferred_conn_type == 'wifi' %}btn-success{% endif %}"
+                            style="flex: 1;" onclick="testConnectionType('wifi')">WiFi
                             局域网</button>
-                        <button id="btn-adb" class="btn" style="flex: 1;" onclick="testConnectionType('adb')">有线
+                        <button id="btn-adb" class="btn {% if preferred_conn_type == 'adb' %}btn-success{% endif %}"
+                            style="flex: 1;" onclick="testConnectionType('adb')">有线
                             ADB</button>
                     </div>
                     <span id="connection-test-status" class="hint" style="margin-top: 6px;"></span>
@@ -109,16 +114,17 @@
                         <button class="btn btn-secondary" onclick="savePath()">保存</button>
                     </div>
                 </div>
-                <div class="setting-row" id="usb-settings" style="display: none;">
+                <div class="setting-row" id="usb-settings">
                     <label>USB 连接</label>
                     <div class="input-group">
-                        <select id="adb-device-select" onchange="onDeviceSelected()">
+                        <select id="adb-device-select" onchange="onDeviceSelected()" {% if preferred_conn_type !='adb'
+                            %}disabled{% endif %}>
                             <option value="">-- 选择设备 --</option>
                         </select>
-                        <button class="btn" onclick="refreshDevices()">刷新设备</button>
-                        <button class="btn" onclick="setupAdbReverse()">设置端口转发</button>
-                        <span id="adb-reverse-status" class="hint"></span>
+                        <button class="btn" onclick="refreshDevices()" {% if preferred_conn_type !='adb' %}disabled{%
+                            endif %}>刷新设备</button>
                     </div>
+                    <span id="adb-reverse-status" class="hint" style="display: block; margin-top: 6px;"></span>
                 </div>
             </section>
 
@@ -201,7 +207,7 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=45"></script>
+    <script src="/static/js/app.js?v=53"></script>
 </body>
 
 </html>

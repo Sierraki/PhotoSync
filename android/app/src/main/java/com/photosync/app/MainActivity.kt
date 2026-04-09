@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -17,6 +18,7 @@ import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -58,6 +60,10 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_CONNECTION_MODE = "connection_mode"
         private const val KEY_SYNCED_COUNT = "synced_count"
         private const val KEY_TOTAL_PHOTOS = "total_photos"
+        private const val KEY_UI_THEME = "ui_theme" // system | light | dark
+        private const val THEME_LIGHT = "light"
+        private const val THEME_DARK = "dark"
+        private const val DEFAULT_SERVER_IP = "192.168.1.7"
         private const val SYNC_MODE_INCREMENTAL = "incremental"
         private const val SYNC_MODE_FULL = "full"
         private const val STOPPING_UI_TIMEOUT_MS = 4000L
@@ -92,18 +98,41 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 必须在 setContentView 之前应用，否则会闪一下
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        applyThemeFromPrefs()
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
         setupUI()
+        // 防止在主题切换后的重建过程中按钮文案残留
+        updateThemeToggleButtonText()
         activeSyncMode = SyncService.currentSyncMode
         restoreSettings()
         initPollingFromCurrentSettings()
         requestPermissions()
         setupSyncCallbacks()
         requestIgnoreBatteryOptimizations()
+    }
+
+    private fun applyThemeFromPrefs() {
+        val theme = prefs.getString(KEY_UI_THEME, null)
+        val targetNightMode = when (theme) {
+            THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
+            THEME_DARK -> AppCompatDelegate.MODE_NIGHT_YES
+            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
+
+        val currentNightMode = AppCompatDelegate.getDefaultNightMode()
+        if (currentNightMode == AppCompatDelegate.MODE_NIGHT_UNSPECIFIED && targetNightMode == AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) {
+            return
+        }
+
+        if (currentNightMode != targetNightMode) {
+            AppCompatDelegate.setDefaultNightMode(targetNightMode)
+        }
     }
 
     // 请求忽略电池优化
@@ -123,6 +152,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupUI() {
         binding.tvSubtitle.text = getAppVersionLabel()
+
+        // 左上角主题切换：一键深/浅色
+        updateThemeToggleButtonText()
+        binding.btnThemeToggle.setOnClickListener {
+            val isDark = isNightActive()
+            val newTheme = if (isDark) THEME_LIGHT else THEME_DARK
+            prefs.edit().putString(KEY_UI_THEME, newTheme).apply()
+            applyThemeFromPrefs()
+            recreate()
+        }
 
         // GitHub 跳转按钮
         binding.btnGithub.setOnClickListener {
@@ -149,7 +188,6 @@ class MainActivity : AppCompatActivity() {
                     binding.layoutWifiConfig.visibility = View.GONE
                     binding.layoutUsbConfig.visibility = View.VISIBLE
                     binding.tvUsbHint.visibility = View.GONE
-                    binding.etServerIp.setText("localhost")
                     updateConnectionStatus(connected = false, message = "未连接")
                 }
             }
@@ -183,6 +221,16 @@ class MainActivity : AppCompatActivity() {
         
         // 获取电脑 IP 地址
         fetchAndDisplayPcIp()
+    }
+
+    private fun isNightActive(): Boolean {
+        val nightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return nightMode == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun updateThemeToggleButtonText() {
+        // 文案表示“点击后切换到哪种模式”
+        binding.btnThemeToggle.text = if (isNightActive()) "浅色" else "深色"
     }
 
     private fun getAppVersionLabel(): String {
@@ -450,6 +498,7 @@ class MainActivity : AppCompatActivity() {
                 binding.etServerPort.setText(savedPort)
             }
         } else {
+            binding.etServerIp.setText(DEFAULT_SERVER_IP)
             binding.etServerPort.setText("9001")
         }
 
@@ -1082,5 +1131,11 @@ class MainActivity : AppCompatActivity() {
             binding.tvSyncMode.text = "同步状态：${if (activeSyncMode == SYNC_MODE_FULL) "全量" else "增量"}"
         }
         updateSyncButtons()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 增强“记忆性”：用户编辑了 IP/端口不一定点测试连接，也要能保存
+        saveSettings()
     }
 }

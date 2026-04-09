@@ -7,9 +7,91 @@ let lastWifiLogSnapshot = "";
 let wifiStoppingSinceMs = 0;
 let wifiStatusErrorStreak = 0;
 let localWifiSyncLogs = [];
+let lastPhoneConnected = false;
+let preferredConnType = "wifi";
+let userSelectedConnType = false;
+let activeAdbSyncRunning = false;
+let activeAdbSyncMode = "";
 
 const STOPPING_UI_TIMEOUT_MS = 4000;
 const WIFI_STATUS_ERROR_RESET_THRESHOLD = 3;
+
+const THEME_STORAGE_KEY = "photosync_theme";
+
+function getEffectiveTheme() {
+    const explicit = document.documentElement.getAttribute("data-theme");
+    if (explicit === "dark" || explicit === "light") return explicit;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+}
+
+function setTheme(theme) {
+    if (theme === "dark" || theme === "light") {
+        document.documentElement.setAttribute("data-theme", theme);
+    } else {
+        document.documentElement.removeAttribute("data-theme");
+    }
+}
+
+function updateThemeToggleLabel() {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    const effective = getEffectiveTheme();
+    btn.textContent = effective === "dark" ? "浅色模式" : "深色模式";
+}
+
+function initThemeToggle() {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+
+    try {
+        const saved = localStorage.getItem(THEME_STORAGE_KEY);
+        if (saved === "dark" || saved === "light") {
+            setTheme(saved);
+        }
+    } catch {
+        // ignore storage errors
+    }
+
+    updateThemeToggleLabel();
+
+    btn.addEventListener("click", () => {
+        const current = getEffectiveTheme();
+        const next = current === "dark" ? "light" : "dark";
+        setTheme(next);
+        try {
+            localStorage.setItem(THEME_STORAGE_KEY, next);
+        } catch {
+            // ignore storage errors
+        }
+        // 同步保存到服务端配置，确保“重启服务”后也能记住
+        try {
+            const fd = new FormData();
+            fd.append("theme", next);
+            fetch("/api/settings/theme", { method: "POST", body: fd });
+        } catch {
+            // ignore network errors
+        }
+        updateThemeToggleLabel();
+    });
+
+    const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    if (!mq) return;
+
+    const onChange = () => {
+        // 只有在用户未显式选择主题时，才随系统变化更新按钮文案
+        const explicit = document.documentElement.getAttribute("data-theme");
+        if (explicit === "dark" || explicit === "light") return;
+        updateThemeToggleLabel();
+    };
+
+    if (typeof mq.addEventListener === "function") {
+        mq.addEventListener("change", onChange);
+    } else if (typeof mq.addListener === "function") {
+        mq.addListener(onChange);
+    }
+}
 
 function addWifiSyncLogMessage(msg) {
     const timestamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -39,16 +121,21 @@ async function loadConnectionStatus() {
         const statusEl = document.getElementById("connection-status");
         const methodEl = document.getElementById("connection-method");
 
+        const selectedMethod = preferredConnType === "adb" ? "USB ADB" : "WiFi 局域网";
+
         if (data.connected) {
+            lastPhoneConnected = true;
             statusEl.textContent = "已连接";
             statusEl.style.color = "green";
 
-            const connType = data.connection_type || "wifi";
-            methodEl.textContent = connType === "adb" ? "USB ADB" : "WiFi 局域网";
+            // 连接方式显示只与 Web 当前选择有关。
+            methodEl.textContent = selectedMethod;
         } else {
+            lastPhoneConnected = false;
             statusEl.textContent = "未连接";
             statusEl.style.color = "gray";
-            methodEl.textContent = "-";
+            // 未连接时也展示“当前选择的连接方式”，避免与设置面板不一致。
+            methodEl.textContent = selectedMethod;
         }
 
         // 更新最近同步的照片列表
@@ -69,6 +156,89 @@ async function loadConnectionStatus() {
     }
 }
 
+function applyConnectionTypeUi(connType, opts = {}) {
+    const btnWifi = document.getElementById("btn-wifi");
+    const btnAdb = document.getElementById("btn-adb");
+
+    if (!btnWifi || !btnAdb) return;
+
+    setUsbControlsEnabled((connType || "").toString().toLowerCase() === "adb");
+
+    if (opts.clearFailed) {
+        btnWifi.classList.remove("btn-failed");
+        btnAdb.classList.remove("btn-failed");
+    }
+
+    btnWifi.classList.remove("btn-success");
+    btnAdb.classList.remove("btn-success");
+
+    const t = (connType || "wifi").toString().toLowerCase() === "adb" ? "adb" : "wifi";
+    if (t === "adb") {
+        btnAdb.classList.add("btn-success");
+        refreshDevices();
+    } else {
+        btnWifi.classList.add("btn-success");
+    }
+}
+
+function setUsbControlsEnabled(enabled) {
+    const usbSettings = document.getElementById("usb-settings");
+    if (!usbSettings) return;
+    const selectEl = usbSettings.querySelector("#adb-device-select");
+    const buttons = usbSettings.querySelectorAll("button");
+    if (selectEl) {
+        selectEl.disabled = !enabled;
+    }
+    buttons.forEach((b) => {
+        b.disabled = !enabled;
+    });
+}
+
+async function setupAdbReverseForSerial(deviceSerial, opts = {}) {
+    const silent = Boolean(opts.silent);
+    if (!deviceSerial) {
+        if (!silent) alert("请先选择设备");
+        return;
+    }
+
+    const statusEl = document.getElementById("adb-reverse-status");
+    if (statusEl) {
+        statusEl.textContent = "正在设置...";
+        statusEl.style.color = "#6B7280";
+    }
+    try {
+        const fd = new FormData();
+        fd.append("serial", deviceSerial);
+        const data = await fetchJSON("/api/adb/setup-reverse", { method: "POST", body: fd });
+        if (statusEl) {
+            if (data.status === "ok") {
+                statusEl.textContent = "✓ " + data.message;
+                statusEl.style.color = "green";
+            } else {
+                statusEl.textContent = "✗ " + data.message;
+                statusEl.style.color = "red";
+            }
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = "✗ 设置失败";
+            statusEl.style.color = "red";
+        }
+    }
+}
+
+async function persistPreferredConnectionType(connType) {
+    const t = (connType || "").toString().toLowerCase();
+    if (t !== "wifi" && t !== "adb") return;
+    try {
+        const fd = new FormData();
+        fd.append("conn_type", t);
+        await fetch("/api/settings/connection", { method: "POST", body: fd });
+    } catch {
+        // ignore network errors
+    }
+}
+
 function updateSyncActionButtons() {
     const btnInc = document.getElementById("btn-sync-incremental");
     const btnFull = document.getElementById("btn-sync-full");
@@ -82,6 +252,23 @@ function updateSyncActionButtons() {
     btnFull.textContent = "全量同步";
     btnInc.disabled = false;
     btnFull.disabled = false;
+
+    // ADB 同步运行时：按钮进入“停止”态（与 WiFi 状态机独立）。
+    if (activeAdbSyncRunning) {
+        const mode = activeAdbSyncMode === "full" ? "full" : "incremental";
+        if (mode === "full") {
+            btnFull.textContent = "停止同步";
+            btnFull.classList.add("btn-stop");
+            btnInc.disabled = true;
+            btnInc.textContent = "当前：全量";
+        } else {
+            btnInc.textContent = "停止同步";
+            btnInc.classList.add("btn-stop");
+            btnFull.disabled = true;
+            btnFull.textContent = "当前：增量";
+        }
+        return;
+    }
 
     const hasPendingOrRunning =
         activeWifiSyncPhase === "requested" ||
@@ -175,6 +362,50 @@ async function requestSync(mode = "incremental") {
     const normalizedMode = mode === "full" ? "full" : "incremental";
     const btnInc = document.getElementById("btn-sync-incremental");
     const btnFull = document.getElementById("btn-sync-full");
+
+    // ADB 模式：走 USB 同步接口（不再误发 WiFi 同步请求）。
+    if (connType === "adb") {
+        try {
+            const adbStatus = await fetchJSON("/api/adb/status");
+            if (adbStatus && adbStatus.running) {
+                const stopData = await fetchJSON("/api/adb/stop", { method: "POST" });
+                addWifiSyncLogMessage(stopData.message || "已发送停止请求");
+                return;
+            }
+        } catch {
+            // ignore status errors
+        }
+
+        btnInc.disabled = true;
+        btnFull.disabled = true;
+        if (normalizedMode === "full") {
+            btnFull.textContent = "准备全量...";
+        } else {
+            btnInc.textContent = "发送请求...";
+        }
+
+        try {
+            const fd = new FormData();
+            if (selectedDeviceSerial) {
+                fd.append("serial", selectedDeviceSerial);
+            }
+            const adbData = await fetchJSON("/api/adb/sync", { method: "POST", body: fd });
+
+            if (adbData.status === "ok") {
+                activeAdbSyncRunning = true;
+                activeAdbSyncMode = normalizedMode;
+                updateSyncActionButtons();
+                addWifiSyncLogMessage(adbData.message || "已开始 ADB 同步");
+            } else {
+                addWifiSyncLogMessage(adbData.message || "ADB 同步请求失败");
+            }
+        } catch (e) {
+            addWifiSyncLogMessage("ADB 同步请求失败: " + e.message);
+        } finally {
+            updateSyncActionButtons();
+        }
+        return;
+    }
 
     // 当前模式已处于请求中/同步中，再点则尝试停止（请求中可取消）
     if (activeWifiSyncMode === normalizedMode &&
@@ -278,7 +509,13 @@ async function loadStatus() {
 
         // 连接方式
         const connType = data.connection_type || "wifi";
-        updateConnectionUI(connType);
+        const serverPreferred = (connType || "wifi").toString().toLowerCase() === "adb" ? "adb" : "wifi";
+        // 如果用户已经手动选过，就不要再被轮询覆盖；否则使用服务端记忆的偏好。
+        if (!userSelectedConnType) {
+            preferredConnType = serverPreferred;
+        }
+        applyConnectionTypeUi(preferredConnType);
+        updateConnectionUI(preferredConnType);
     } catch (e) {
         console.error("加载状态失败:", e);
     }
@@ -540,7 +777,9 @@ function onDeviceSelected() {
     // 仅在“点击了 ADB 测试按钮后等待用户选择设备”的场景下，才自动触发连接测试。
     if (pendingAdbDeviceSelection && selectedDeviceSerial) {
         pendingAdbDeviceSelection = false;
-        performConnectionTest("adb", selectedDeviceSerial);
+        setupAdbReverseForSerial(selectedDeviceSerial, { silent: true }).finally(() => {
+            performConnectionTest("adb", selectedDeviceSerial);
+        });
     }
 }
 
@@ -604,47 +843,21 @@ async function testConnection() {
 
 function updateConnectionUI(connType) {
     const selectEl = document.getElementById("connection-type-select");
-    const usbSettings = document.getElementById("usb-settings");
 
     if (selectEl) {
         selectEl.value = connType;
     }
-    if (usbSettings) {
-        usbSettings.style.display = connType === "adb" ? "flex" : "none";
-        // 如果是 ADB 模式，刷新设备列表
-        if (connType === "adb") {
-            refreshDevices();
-        }
+    setUsbControlsEnabled((connType || "").toString().toLowerCase() === "adb");
+    // 如果是 ADB 模式，刷新设备列表
+    if ((connType || "").toString().toLowerCase() === "adb") {
+        refreshDevices();
     }
 }
 
 async function setupAdbReverse() {
     const selectEl = document.getElementById("adb-device-select");
     const deviceSerial = selectEl.value;
-
-    if (!deviceSerial) {
-        alert("请先选择设备");
-        return;
-    }
-
-    const statusEl = document.getElementById("adb-reverse-status");
-    statusEl.textContent = "正在设置...";
-    statusEl.style.color = "#6B7280";
-    try {
-        const fd = new FormData();
-        fd.append("serial", deviceSerial);
-        const data = await fetchJSON("/api/adb/setup-reverse", { method: "POST", body: fd });
-        if (data.status === "ok") {
-            statusEl.textContent = "✓ " + data.message;
-            statusEl.style.color = "green";
-        } else {
-            statusEl.textContent = "✗ " + data.message;
-            statusEl.style.color = "red";
-        }
-    } catch (e) {
-        statusEl.textContent = "✗ 设置失败";
-        statusEl.style.color = "red";
-    }
+    await setupAdbReverseForSerial(deviceSerial);
 }
 
 // 删除旧的扫描代码，避免重复
@@ -664,6 +877,8 @@ async function pollSyncStatus() {
             fetchJSON("/api/status"),
             fetchJSON("/api/settings/scan-status")
         ]);
+
+        activeAdbSyncRunning = Boolean(adbStatus && adbStatus.running);
 
         wifiStatusErrorStreak = 0;
 
@@ -695,9 +910,7 @@ async function pollSyncStatus() {
         let isRunning = false;
         let syncSource = "";
 
-        const wifiLinkType = (wifiStatus.connection_type || "wifi").toString().toLowerCase() === "adb"
-            ? "ADB"
-            : "WiFi";
+        const wifiLinkType = preferredConnType === "adb" ? "ADB" : "WiFi";
 
         if (adbStatus && adbStatus.running) {
             s = adbStatus;
@@ -837,6 +1050,13 @@ async function testConnectionType(type) {
     const btnAdb = document.getElementById("btn-adb");
     const statusEl = document.getElementById("connection-test-status");
 
+    // 用户点击即锁定选择：除非用户再点另一个，否则永远不要自动改回。
+    preferredConnType = (type || "wifi").toString().toLowerCase() === "adb" ? "adb" : "wifi";
+    userSelectedConnType = true;
+    applyConnectionTypeUi(preferredConnType, { clearFailed: true });
+    // 立即持久化偏好，避免定时刷新把按钮刷回旧值。
+    persistPreferredConnectionType(preferredConnType);
+
     // 如果是 ADB，先弹出设备选择
     if (type === "adb") {
         await showAdbDeviceSelector();
@@ -852,10 +1072,7 @@ async function showAdbDeviceSelector() {
     statusEl.textContent = "正在刷新设备列表...";
     statusEl.style.color = "#6b7280";
 
-    const usbSettings = document.getElementById("usb-settings");
-    if (usbSettings) {
-        usbSettings.style.display = "flex";
-    }
+    setUsbControlsEnabled(true);
 
     const selectEl = document.getElementById("adb-device-select");
     if (selectEl) {
@@ -888,6 +1105,8 @@ async function showAdbDeviceSelector() {
                 selectEl.innerHTML = `<option value="${deviceSerial}">${label}</option>`;
                 selectEl.value = deviceSerial;
             }
+            selectedDeviceSerial = deviceSerial;
+            await setupAdbReverseForSerial(deviceSerial, { silent: true });
             performConnectionTest("adb", deviceSerial);
             return;
         }
@@ -946,10 +1165,13 @@ async function performConnectionTest(type, deviceSerial) {
             const activeBtn = type === "adb" ? btnAdb : btnWifi;
             const inactiveBtn = type === "adb" ? btnWifi : btnAdb;
 
+            // 成功时只高亮选中的那个；不要把另一个强行标红（避免 UI 误导）。
             activeBtn?.classList.remove("btn-failed");
             activeBtn?.classList.add("btn-success");
-            inactiveBtn?.classList.remove("btn-success");
-            inactiveBtn?.classList.add("btn-failed");
+            inactiveBtn?.classList.remove("btn-success", "btn-failed");
+
+            applyConnectionTypeUi(type);
+            await persistPreferredConnectionType(type);
 
             statusEl.textContent = `✓ ${data.message}`;
             statusEl.style.color = "#22c55e";
@@ -980,6 +1202,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const portInput = document.getElementById("server-port-input");
     if (portInput) portInput.addEventListener("input", () => { portInput._userEdited = true; });
+
+    initThemeToggle();
+
+    // 首屏从服务端注入的偏好连接方式初始化（重启服务后仍可记住）。
+    const injected = (document.documentElement.getAttribute("data-preferred-conn") || "").toLowerCase();
+    if (!userSelectedConnType && (injected === "wifi" || injected === "adb")) {
+        preferredConnType = injected;
+        applyConnectionTypeUi(preferredConnType);
+    }
 });
 
 loadStatus();

@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F0F2F5">
+    android:background="@color/app_background">
 
     <ScrollView
         android:layout_width="match_parent"
@@ -15,17 +15,39 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-        <!-- GitHub 按钮 -->
-        <ImageButton
-            android:id="@+id/btnGithub"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_gravity="end"
-            android:layout_marginBottom="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/github_icon"
-            android:scaleType="centerInside"
-            android:contentDescription="GitHub" />
+        <!-- 顶部操作：左主题切换 / 右 GitHub -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnThemeToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:minHeight="40dp"
+                android:text="深色"
+                android:textSize="13sp"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                app:cornerRadius="10dp" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <ImageButton
+                android:id="@+id/btnGithub"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:padding="8dp"
+                android:src="@drawable/github_icon"
+                android:scaleType="centerInside"
+                android:contentDescription="GitHub" />
+        </LinearLayout>
 
         <!-- 标题 -->
         <TextView
@@ -34,7 +56,7 @@
             android:text="PhotoSync"
             android:textSize="28sp"
             android:textStyle="bold"
-            android:textColor="#2563EB"
+            android:textColor="@color/brand_primary"
             android:gravity="center"
             android:layout_marginBottom="4dp" />
 
@@ -44,7 +66,7 @@
             android:layout_height="wrap_content"
             android:text="手机相册同步到电脑"
             android:textSize="14sp"
-            android:textColor="#6B7280"
+            android:textColor="@color/text_secondary"
             android:gravity="center"
             android:layout_marginBottom="20dp" />
 
@@ -68,7 +90,7 @@
                     android:text="连接方式"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="#374151"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="12dp" />
 
                 <RadioGroup
@@ -116,7 +138,7 @@
                     android:text="服务器地址"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="#374151"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="12dp" />
 
                 <LinearLayout
@@ -140,7 +162,7 @@
                             android:layout_height="wrap_content"
                             android:text="电脑 IP："
                             android:textSize="13sp"
-                            android:textColor="#6B7280"
+                            android:textColor="@color/text_secondary"
                             android:layout_marginEnd="8dp" />
 
                         <TextView
@@ -151,7 +173,7 @@
                             android:text="扫描中..."
                             android:textSize="13sp"
                             android:textStyle="bold"
-                            android:textColor="#2563EB"
+                            android:textColor="@color/brand_primary"
                             android:textIsSelectable="true" />
                     </LinearLayout>
 
@@ -170,8 +192,8 @@
                             android:hint="电脑 IP"
                             app:boxBackgroundMode="outline"
                             app:expandedHintEnabled="false"
-                            app:boxBackgroundColor="@android:color/white"
-                            app:boxStrokeColor="@color/design_default_color_primary"
+                            app:boxBackgroundColor="@color/panel_background"
+                            app:boxStrokeColor="@color/brand_primary"
                             app:boxCornerRadiusBottomEnd="8dp"
                             app:boxCornerRadiusBottomStart="8dp"
                             app:boxCornerRadiusTopEnd="8dp"
@@ -181,7 +203,9 @@
                                 android:id="@+id/etServerIp"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:inputType="text" />
+                                android:inputType="text"
+                                android:textColor="@color/text_primary_strong"
+                                android:textColorHint="@color/text_secondary" />
                         </com.google.android.material.textfield.TextInputLayout>
 
                         <com.google.android.material.textfield.TextInputLayout
@@ -190,8 +214,8 @@
                             android:hint="端口"
                             app:boxBackgroundMode="outline"
                             app:expandedHintEnabled="false"
-                            app:boxBackgroundColor="@android:color/white"
-                            app:boxStrokeColor="@color/design_default_color_primary"
+                            app:boxBackgroundColor="@color/panel_background"
+                            app:boxStrokeColor="@color/brand_primary"
                             app:boxCornerRadiusBottomEnd="8dp"
                             app:boxCornerRadiusBottomStart="8dp"
                             app:boxCornerRadiusTopEnd="8dp"
@@ -202,7 +226,9 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:inputType="number"
-                                android:textAlignment="center" />
+                                android:textAlignment="center"
+                                android:textColor="@color/text_primary_strong"
+                                android:textColorHint="@color/text_secondary" />
                         </com.google.android.material.textfield.TextInputLayout>
                     </LinearLayout>
 
@@ -242,7 +268,7 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textSize="13sp"
-                    android:textColor="#6B7280"
+                        android:textColor="@color/text_secondary"
                     android:visibility="gone" />
 
                 <LinearLayout
@@ -257,7 +283,7 @@
                         android:layout_height="wrap_content"
                         android:text=""
                         android:textSize="13sp"
-                        android:textColor="#6B7280"
+                        android:textColor="@color/text_secondary"
                         android:lineSpacingExtra="4dp" />
 
                     <com.google.android.material.button.MaterialButton
@@ -291,7 +317,7 @@
                         android:layout_height="wrap_content"
                         android:text="未连接"
                         android:textSize="13sp"
-                        android:textColor="#6B7280"
+                        android:textColor="@color/text_secondary"
                         android:layout_marginStart="8dp" />
                 </LinearLayout>
             </LinearLayout>
@@ -317,7 +343,7 @@
                     android:text="同步状态"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="#374151"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="12dp" />
 
                 <LinearLayout
@@ -332,7 +358,7 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="#F8FAFC"
+                        android:background="@color/panel_background"
                         android:padding="12dp">
 
                         <TextView
@@ -340,7 +366,7 @@
                             android:layout_height="wrap_content"
                             android:text="相册照片"
                             android:textSize="12sp"
-                            android:textColor="#9CA3AF" />
+                            android:textColor="@color/text_tertiary" />
 
                         <TextView
                             android:id="@+id/tvTotalPhotos"
@@ -349,7 +375,7 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="#1F2937" />
+                            android:textColor="@color/text_primary_strong" />
                     </LinearLayout>
 
                     <View
@@ -362,7 +388,7 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="#F8FAFC"
+                        android:background="@color/panel_background"
                         android:padding="12dp">
 
                         <TextView
@@ -370,7 +396,7 @@
                             android:layout_height="wrap_content"
                             android:text="已同步"
                             android:textSize="12sp"
-                            android:textColor="#9CA3AF" />
+                            android:textColor="@color/text_tertiary" />
 
                         <TextView
                             android:id="@+id/tvSyncedPhotos"
@@ -392,7 +418,7 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="#F8FAFC"
+                        android:background="@color/panel_background"
                         android:padding="12dp">
 
                         <TextView
@@ -400,7 +426,7 @@
                             android:layout_height="wrap_content"
                             android:text="电脑端照片"
                             android:textSize="12sp"
-                            android:textColor="#9CA3AF" />
+                            android:textColor="@color/text_tertiary" />
 
                         <TextView
                             android:id="@+id/tvPcPhotos"
@@ -428,7 +454,7 @@
                     android:layout_height="wrap_content"
                     android:text="同步状态：-"
                     android:textSize="13sp"
-                    android:textColor="#4B5563"
+                    android:textColor="@color/text_muted"
                     android:gravity="center"
                     android:layout_marginBottom="4dp" />
 
@@ -439,7 +465,7 @@
                     android:layout_height="wrap_content"
                     android:text="点击下方按钮开始同步"
                     android:textSize="13sp"
-                    android:textColor="#6B7280"
+                    android:textColor="@color/text_secondary"
                     android:gravity="center" />
 
                 <!-- 第二行：速度和剩余时间 -->
@@ -449,7 +475,7 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textSize="12sp"
-                    android:textColor="#9CA3AF"
+                    android:textColor="@color/text_tertiary"
                     android:gravity="center"
                     android:layout_marginTop="2dp" />
             </LinearLayout>
@@ -502,7 +528,7 @@
                     android:text="同步日志"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="#374151"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="8dp" />
 
                 <ScrollView
@@ -515,9 +541,9 @@
                         android:layout_height="wrap_content"
                         android:text="等待操作..."
                         android:textSize="12sp"
-                        android:textColor="#6B7280"
+                        android:textColor="@color/text_secondary"
                         android:fontFamily="monospace"
-                        android:background="#F8FAFC"
+                        android:background="@color/panel_background"
                         android:padding="8dp" />
                 </ScrollView>
             </LinearLayout>

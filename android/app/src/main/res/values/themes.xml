@@ -1,11 +1,11 @@
 <resources>
-    <style name="Theme.PhotoSync" parent="Theme.Material3.Light.NoActionBar">
-        <item name="colorPrimary">#2563EB</item>
-        <item name="colorPrimaryContainer">#DBEAFE</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#7C3AED</item>
-        <item name="colorSurface">#FFFFFF</item>
-        <item name="colorOnSurface">#1A1A2E</item>
-        <item name="android:statusBarColor">#2563EB</item>
+    <style name="Theme.PhotoSync" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_primary</item>
+        <item name="colorPrimaryContainer">@color/brand_primary_container</item>
+        <item name="colorOnPrimary">@color/brand_on_primary</item>
+        <item name="colorSecondary">@color/brand_secondary</item>
+        <item name="colorSurface">@color/panel_background</item>
+        <item name="colorOnSurface">@color/text_primary_strong</item>
+        <item name="android:statusBarColor">@color/brand_primary</item>
     </style>
 </resources>

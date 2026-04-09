@@ -8,6 +8,11 @@ on:
       - 'android/**'
       - '.github/workflows/android-auto-release.yml'
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish even if tag already exists (update existing Release assets)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -20,6 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Read version + prepare release metadata
         id: meta
@@ -66,6 +72,12 @@ jobs:
         id: tagcheck
         run: |
           tag='${{ steps.meta.outputs.tag }}'
+          force='${{ github.event.inputs.force_publish }}'
+          if [ "$force" = "true" ]; then
+            echo "force_publish=true; will publish/update Release for $tag"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "Tag already exists: $tag. Skip release."
             echo "skip=true" >> "$GITHUB_OUTPUT"

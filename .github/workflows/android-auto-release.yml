@@ -92,29 +92,6 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify GPG signing secrets
-        if: steps.tagcheck.outputs.skip != 'true'
-        run: |
-          if [ -z "${{ secrets.CI_GPG_PRIVATE_KEY }}" ]; then
-            echo "Missing secret: CI_GPG_PRIVATE_KEY"
-            exit 1
-          fi
-          if [ -z "${{ secrets.CI_GPG_PASSPHRASE }}" ]; then
-            echo "Missing secret: CI_GPG_PASSPHRASE"
-            exit 1
-          fi
-
-      - name: Import GPG key (for Verified tag)
-        if: steps.tagcheck.outputs.skip != 'true'
-        id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.CI_GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.CI_GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_commit_gpgsign: false
-          git_tag_gpgsign: true
-
       - name: Setup JDK 17
         if: steps.tagcheck.outputs.skip != 'true'
         uses: actions/setup-java@v4
@@ -180,7 +157,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -s "$tag" -m "Release $tag"
+          git tag -a "$tag" -m "Release $tag"
           git push origin "$tag"
 
       - name: Rename APK to PhotoSync.apk

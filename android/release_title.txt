@@ -1,0 +1,1 @@
+PhotoSync ver.{{VERSION_NAME}}

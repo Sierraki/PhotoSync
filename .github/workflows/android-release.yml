@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       versionCode:
-        description: 'App 版本码（整数，必须递增，例如：8）'
+        description: 'App 版本码（纯整数，必须递增，例如：8；不要填 1.5.2）'
         required: true
-        type: number
+        type: string
       releaseNotes:
         description: 'Release 说明（可选）'
         required: false
@@ -59,7 +59,13 @@ jobs:
           import re
           from pathlib import Path
           version_name = r'''${{ inputs.versionName }}'''.strip()
-          version_code = int(r'''${{ inputs.versionCode }}''')
+          version_code_raw = r'''${{ inputs.versionCode }}'''.strip()
+          if not version_code_raw.isdigit():
+            raise SystemExit(
+              "Invalid versionCode: expected integer like 8, got %r. "
+              "Tip: put semantic version (e.g. 1.5.2) into versionName." % version_code_raw
+            )
+          version_code = int(version_code_raw)
 
           p = Path('android/app/build.gradle.kts')
           txt = p.read_text(encoding='utf-8')

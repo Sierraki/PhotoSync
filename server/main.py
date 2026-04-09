@@ -676,6 +676,9 @@ wifi_sync_status = {
     "phase": "",
     "connected": False,        # 手机是否已连接
     "connection_type": "",    # "wifi" 或 "adb"
+    # 控制权：谁发起同步，谁拥有“请求/模式切换”等控制权。
+    # phone 仍会持续上报进度，但不应在 pc 发起时覆盖关键控制字段。
+    "control_owner": "",      # "pc" | "phone" | ""
     "pc_request_sync": False,  # PC 端请求手机开始同步
     "pc_request_stop": False,  # PC 端请求手机停止同步
     "stop_requested_at": None,  # 记录停止请求时间，避免长期卡在 stopping
@@ -698,6 +701,15 @@ wifi_sync_status = {
 }
 wifi_status_lock = threading.RLock()
 full_prepare_token = 0
+
+
+def _wifi_is_active_locked(status: dict) -> bool:
+    """判断 WiFi 同步状态机是否处于活跃/占用态（需要控制权）。"""
+    phase = (status.get("phase") or "").strip().lower()
+    running = bool(status.get("running", False))
+    if running:
+        return True
+    return phase in {"requested", "preparing_full", "scanning", "syncing", "stopping"}
 
 # 本次同步的照片列表（最多保留 50 条）
 recent_synced_photos = []
@@ -1701,7 +1713,11 @@ async def wifi_sync_start(
         wifi_sync_status["phone_log"] = []
         wifi_sync_status["connected"] = True
         wifi_sync_status["pc_request_stop"] = False
-        wifi_sync_status["connection_type"] = connection_type
+        # 只有在“手机端发起同步”时才允许用 start 上报覆盖 connection_type。
+        # 若 control_owner=pc（PC 发起），则保持 PC/手机 register/unregister 维护的实际连接来源。
+        if wifi_sync_status.get("control_owner") != "pc":
+            wifi_sync_status["control_owner"] = "phone"
+            wifi_sync_status["connection_type"] = connection_type
         wifi_sync_status.update({
             "running": True,
             "phase": "syncing",
@@ -1791,6 +1807,8 @@ async def wifi_sync_stop(message: str = Form("")):
         wifi_sync_status["pc_request_stop"] = False
         wifi_sync_status["stop_requested_at"] = None
         wifi_sync_status["pc_request_sync"] = False
+        # 同步结束后释放控制权，允许另一端重新发起来改变优先级。
+        wifi_sync_status["control_owner"] = ""
     _wifi_sync_log(message or "同步已完成")
     _wifi_phone_log(message or "同步已完成")
     db.set_last_scan(datetime.now().isoformat())
@@ -1816,9 +1834,15 @@ def _prepare_full_sync_then_request(conn_type: str, prepare_token: int):
             if prepare_token != full_prepare_token:
                 return
 
+            # 若手机端已发起并占用控制权，则 PC 端全量准备线程不应再覆盖状态。
+            if _wifi_is_active_locked(wifi_sync_status) and wifi_sync_status.get(
+                    "control_owner") == "phone":
+                return
+
             wifi_sync_status["pc_request_sync"] = True
-            wifi_sync_status["connection_type"] = conn_type or config.data.get(
-                "connection_type", "wifi")
+            # PC 端发起同步请求不应覆盖手机实际连接方式；
+            # connection_type 由手机端 register/unregister 维护。
+            wifi_sync_status["control_owner"] = "pc"
             wifi_sync_status["requested_sync_mode"] = "full"
             wifi_sync_status["sync_mode"] = "full"
             wifi_sync_status["running"] = False
@@ -1858,6 +1882,12 @@ async def request_sync(
         return {"status": "error", "message": "无效的同步模式"}
 
     if mode_value == "full":
+        # 若手机端正在同步（手机发起），PC 端不能抢占；请先停止再从 PC 端发起。
+        with wifi_status_lock:
+            if _wifi_is_active_locked(wifi_sync_status) and wifi_sync_status.get(
+                    "control_owner") == "phone":
+                return {"status": "error", "message": "手机端正在同步（手机发起），请先在手机端停止同步"}
+
         if scan_progress["running"]:
             return {"status": "error", "message": "全量同步前正在刷新数据库，请稍候"}
 
@@ -1878,6 +1908,7 @@ async def request_sync(
 
             wifi_sync_status["pc_request_sync"] = False
             wifi_sync_status["pc_request_stop"] = False
+            wifi_sync_status["control_owner"] = "pc"
             wifi_sync_status["requested_sync_mode"] = "full"
             wifi_sync_status["sync_mode"] = "full"
             wifi_sync_status["running"] = False
@@ -1913,12 +1944,19 @@ async def request_sync(
         with wifi_status_lock:
             full_prepare_token += 1
 
+    # 若手机端正在同步（手机发起），PC 端不能抢占；请先停止再从 PC 端发起。
+    with wifi_status_lock:
+        if _wifi_is_active_locked(wifi_sync_status) and wifi_sync_status.get(
+                "control_owner") == "phone":
+            return {"status": "error", "message": "手机端正在同步（手机发起），请先在手机端停止同步"}
+
     # 设置请求标志，手机端轮询时会收到
     with wifi_status_lock:
         wifi_sync_status["pc_request_sync"] = True
         wifi_sync_status["pc_request_stop"] = False
-        wifi_sync_status["connection_type"] = conn_type or config.data.get(
-            "connection_type", "wifi")
+        # PC 端点击“同步”仅表示发起请求，不应强行指定/覆盖手机的连接方式。
+        # connection_type 用于展示实际连接来源，由手机端 register/unregister 更新。
+        wifi_sync_status["control_owner"] = "pc"
         wifi_sync_status["requested_sync_mode"] = mode_value
         wifi_sync_status["sync_mode"] = mode_value
 
@@ -1951,6 +1989,11 @@ async def cancel_sync_request():
     """取消 PC 端发起但尚未开始的同步请求"""
     global full_prepare_token
     with wifi_status_lock:
+        # 若当前控制权属于手机端，则 PC 端不允许取消/改写状态；只能先停止再重新发起。
+        if _wifi_is_active_locked(wifi_sync_status) and wifi_sync_status.get(
+                "control_owner") == "phone":
+            return {"status": "error", "message": "手机端发起的同步进行中，电脑端无法取消；请先在手机端停止"}
+
         if wifi_sync_status.get("phase") == "preparing_full":
             scan_progress["running"] = False
             full_prepare_token += 1
@@ -1960,6 +2003,7 @@ async def cancel_sync_request():
             wifi_sync_status["current"] = "已取消全量准备"
             wifi_sync_status["requested_sync_mode"] = "incremental"
             wifi_sync_status["sync_mode"] = "incremental"
+            wifi_sync_status["control_owner"] = ""
             return {"status": "ok", "message": "已取消全量同步准备"}
 
         if wifi_sync_status.get("phase") == "requested" and not wifi_sync_status.get("running"):
@@ -1969,6 +2013,7 @@ async def cancel_sync_request():
             wifi_sync_status["current"] = "已取消同步请求"
             wifi_sync_status["requested_sync_mode"] = "incremental"
             wifi_sync_status["sync_mode"] = "incremental"
+            wifi_sync_status["control_owner"] = ""
             return {"status": "ok", "message": "已取消同步请求"}
 
         if wifi_sync_status.get("running"):
@@ -2048,6 +2093,7 @@ async def wifi_sync_get_status():
                 wifi_sync_status["phase"] = "done"
                 wifi_sync_status["current"] = "停止超过3秒无响应，已强制结束本次同步"
                 wifi_sync_status["stop_requested_at"] = None
+                wifi_sync_status["control_owner"] = ""
 
         snapshot = dict(wifi_sync_status)
     with recent_photos_lock:

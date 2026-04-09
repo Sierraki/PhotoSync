@@ -58,11 +58,11 @@ jobs:
 
           Path('release_body.md').write_text(notes.strip() + '\n', encoding='utf-8')
 
-            out_path = os.environ.get('GITHUB_OUTPUT')
-            if not out_path:
+          out_path = os.environ.get('GITHUB_OUTPUT')
+          if not out_path:
               raise SystemExit('GITHUB_OUTPUT is not set')
 
-            with open(out_path, 'a', encoding='utf-8') as f:
+          with open(out_path, 'a', encoding='utf-8') as f:
               f.write(f'version_name={version_name}\n')
               f.write(f'version_code={version_code}\n')
               f.write(f'tag={tag}\n')

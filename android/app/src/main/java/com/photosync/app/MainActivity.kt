@@ -383,8 +383,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun formatSpeedMb(speedMb: Double): String {
-        val v = speedMb.coerceAtLeast(0.0)
-        return String.format("%.1f MB/s", v)
+        val mbps = speedMb.coerceAtLeast(0.0)
+        val bytesPerSec = mbps * 1024.0 * 1024.0
+        return when {
+            bytesPerSec < 1024.0 -> String.format("%.0fB/s", bytesPerSec)
+            bytesPerSec < 1024.0 * 1024.0 -> String.format("%.0fKB/s", bytesPerSec / 1024.0)
+            else -> String.format("%.1fMB/s", mbps)
+        }
     }
 
     private fun normalizeMode(raw: String?): String {

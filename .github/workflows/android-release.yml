@@ -1,0 +1,155 @@
+name: Android Release (APK)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.6'
+
+      - name: Read version + prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - << 'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          gradle = Path('android/app/build.gradle.kts').read_text(encoding='utf-8')
+          m_code = re.search(r'versionCode\s*=\s*(\d+)', gradle)
+          m_name = re.search(r'versionName\s*=\s*"([^"]+)"', gradle)
+          if not m_code or not m_name:
+              raise SystemExit('Cannot find versionCode/versionName in android/app/build.gradle.kts')
+
+          version_code = m_code.group(1)
+          version_name = m_name.group(1)
+          tag = f'v{version_name}'
+
+          title_file = Path('android/release_title.txt')
+          notes_file = Path('android/release_notes.md')
+
+          title = title_file.read_text(encoding='utf-8').strip() if title_file.exists() else f'PhotoSync ver.{version_name}'
+          notes = notes_file.read_text(encoding='utf-8') if notes_file.exists() else ''
+
+          title = title.replace('{{VERSION_NAME}}', version_name).replace('{{VERSION_CODE}}', version_code)
+          notes = notes.replace('{{VERSION_NAME}}', version_name).replace('{{VERSION_CODE}}', version_code)
+          if not notes.strip():
+              notes = f'PhotoSync ver.{version_name} (versionCode {version_code})'
+
+          apk_name = f'PhotoSync {version_name}.apk'
+          Path('release_body.md').write_text(notes.strip() + '\n', encoding='utf-8')
+
+          out_path = os.environ.get('GITHUB_OUTPUT')
+          if not out_path:
+              raise SystemExit('GITHUB_OUTPUT is not set')
+          with open(out_path, 'a', encoding='utf-8') as f:
+              f.write(f'version_name={version_name}\n')
+              f.write(f'version_code={version_code}\n')
+              f.write(f'tag={tag}\n')
+              f.write(f'apk_name={apk_name}\n')
+              f.write('title<<EOF\n')
+              f.write(title + '\n')
+              f.write('EOF\n')
+
+          print('versionName=', version_name)
+          print('versionCode=', version_code)
+          print('tag=', tag)
+          print('apk_name=', apk_name)
+          print('title=', title)
+          PY
+
+      - name: Fail if tag already exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.tag }}'
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag already exists: $tag"
+            echo "Please bump versionName in android/app/build.gradle.kts and rerun this workflow."
+            exit 1
+          fi
+
+      - name: Build Release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] \
+            && [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ] \
+            && [ -n "${ANDROID_KEY_ALIAS:-}" ] \
+            && [ -n "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "Signing enabled (secrets present)."
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+
+            export SIGNING_STORE_FILE="$GITHUB_WORKSPACE/android/release.keystore"
+            export SIGNING_STORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+            export SIGNING_KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            export SIGNING_KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
+          else
+            echo "Signing disabled (missing secrets)."
+          fi
+
+          gradle -p android :app:assembleRelease
+
+      - name: Rename APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_dir="android/app/build/outputs/apk/release"
+          apk_path=$(ls -1 "$apk_dir"/*.apk | head -n 1)
+          echo "Found APK: $apk_path"
+
+          apk_name='${{ steps.meta.outputs.apk_name }}'
+          target_path="$apk_dir/$apk_name"
+          cp "$apk_path" "$target_path"
+          echo "apk_path=$target_path" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push git tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.tag }}'
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.title }}
+          body_path: release_body.md
+          draft: false
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.apk.outputs.apk_path }}

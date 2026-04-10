@@ -347,18 +347,18 @@
                     android:textColor="@color/text_primary"
                     android:layout_marginBottom="12dp" />
 
+                <!-- 统计（纵向列表）：每行横向展示“标题 + 数字”（与截图一致） -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:layout_marginBottom="8dp">
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
                         android:background="@drawable/panel_item_bg"
                         android:padding="14dp">
 
@@ -366,8 +366,13 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="相册照片"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textColor="@color/text_tertiary" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
 
                         <TextView
                             android:id="@+id/tvTotalPhotos"
@@ -376,19 +381,21 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="@color/text_primary_strong" />
+                            android:textColor="@color/text_primary_strong"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:includeFontPadding="false" />
                     </LinearLayout>
 
                     <View
-                        android:layout_width="8dp"
-                        android:layout_height="match_parent" />
+                        android:layout_width="match_parent"
+                        android:layout_height="8dp" />
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
                         android:background="@drawable/panel_item_bg"
                         android:padding="14dp">
 
@@ -396,8 +403,13 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="已同步"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textColor="@color/text_tertiary" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
 
                         <TextView
                             android:id="@+id/tvSyncedPhotos"
@@ -406,19 +418,21 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="@color/success" />
+                            android:textColor="@color/success"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:includeFontPadding="false" />
                     </LinearLayout>
 
                     <View
-                        android:layout_width="8dp"
-                        android:layout_height="match_parent" />
+                        android:layout_width="match_parent"
+                        android:layout_height="8dp" />
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
                         android:background="@drawable/panel_item_bg"
                         android:padding="14dp">
 
@@ -426,8 +440,13 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="电脑端照片"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textColor="@color/text_tertiary" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
 
                         <TextView
                             android:id="@+id/tvPcPhotos"
@@ -436,19 +455,21 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="@color/warning" />
+                            android:textColor="@color/warning"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:includeFontPadding="false" />
                     </LinearLayout>
 
                     <View
-                        android:layout_width="8dp"
-                        android:layout_height="match_parent" />
+                        android:layout_width="match_parent"
+                        android:layout_height="8dp" />
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
                         android:background="@drawable/panel_item_bg"
                         android:padding="14dp">
 
@@ -456,18 +477,22 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="速度"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textColor="@color/text_tertiary" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
 
                         <TextView
                             android:id="@+id/tvSpeedValue"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="0B/s"
-                            android:textSize="16sp"
+                            android:textSize="18sp"
                             android:textStyle="bold"
                             android:textColor="@color/text_primary_strong"
-                            android:layout_marginTop="4dp"
                             android:maxLines="1"
                             android:ellipsize="end"
                             android:includeFontPadding="false" />

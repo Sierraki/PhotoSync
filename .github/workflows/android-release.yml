@@ -92,14 +92,31 @@ jobs:
           fi
 
       - name: Build Release APK
-        run: |
-          set -e
-          gradle -p android :app:assembleRelease
+        shell: bash
         env:
-          SIGNING_STORE_FILE: ${{ github.workspace }}/android/release.keystore
-          SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] \
+            && [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ] \
+            && [ -n "${ANDROID_KEY_ALIAS:-}" ] \
+            && [ -n "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "Signing enabled (secrets present)."
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+
+            export SIGNING_STORE_FILE="$GITHUB_WORKSPACE/android/release.keystore"
+            export SIGNING_STORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+            export SIGNING_KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            export SIGNING_KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
+          else
+            echo "Signing disabled (missing secrets)."
+          fi
+
+          gradle -p android :app:assembleRelease
 
       - name: Rename APK
         id: apk

@@ -15,5 +15,14 @@
     <color name="text_muted">#9CA3AF</color>
     <color name="text_tertiary">#6B7280</color>
 
+    <!-- 语义色：用于同步状态数字与按钮停止态（深色） -->
+    <color name="success">#4ADE80</color>
+    <color name="warning">#FBBF24</color>
+    <color name="danger">#F87171</color>
+
+    <color name="success_on">#0B1220</color>
+    <color name="warning_on">#0B1220</color>
+    <color name="danger_on">#0B1220</color>
+
     <color name="github_logo">#FFFFFF</color>
 </resources>

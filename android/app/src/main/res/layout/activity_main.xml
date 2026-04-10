@@ -358,8 +358,8 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="@color/panel_background"
-                        android:padding="12dp">
+                        android:background="@drawable/panel_item_bg"
+                        android:padding="14dp">
 
                         <TextView
                             android:layout_width="wrap_content"
@@ -388,8 +388,8 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="@color/panel_background"
-                        android:padding="12dp">
+                        android:background="@drawable/panel_item_bg"
+                        android:padding="14dp">
 
                         <TextView
                             android:layout_width="wrap_content"
@@ -405,7 +405,7 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="#22C55E" />
+                            android:textColor="@color/success" />
                     </LinearLayout>
 
                     <View
@@ -418,8 +418,8 @@
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:gravity="center"
-                        android:background="@color/panel_background"
-                        android:padding="12dp">
+                        android:background="@drawable/panel_item_bg"
+                        android:padding="14dp">
 
                         <TextView
                             android:layout_width="wrap_content"
@@ -435,11 +435,11 @@
                             android:text="0"
                             android:textSize="22sp"
                             android:textStyle="bold"
-                            android:textColor="#F59E0B" />
+                            android:textColor="@color/warning" />
                     </LinearLayout>
                 </LinearLayout>
 
-                <!-- 进度条 -->
+                <!-- 进度条（保留：目前 UI 主要靠文本） -->
                 <com.google.android.material.progressindicator.LinearProgressIndicator
                     android:id="@+id/progressSync"
                     android:layout_width="match_parent"
@@ -448,36 +448,78 @@
                     app:trackCornerRadius="4dp"
                     android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/tvSyncMode"
+                <!-- 第二排：速度卡 + 信息卡（与截图一致） -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="同步状态：-"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_muted"
-                    android:gravity="center"
-                    android:layout_marginBottom="4dp" />
+                    android:orientation="horizontal">
 
-                <!-- 第一行：正在同步的文件 -->
-                <TextView
-                    android:id="@+id/tvSyncProgress"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="点击下方按钮开始同步"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_secondary"
-                    android:gravity="center" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/panel_item_bg"
+                        android:padding="14dp">
 
-                <!-- 第二行：速度和剩余时间 -->
-                <TextView
-                    android:id="@+id/tvSyncSpeed"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textSize="12sp"
-                    android:textColor="@color/text_tertiary"
-                    android:gravity="center"
-                    android:layout_marginTop="2dp" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="速度"
+                            android:textSize="12sp"
+                            android:textColor="@color/text_tertiary" />
+
+                        <TextView
+                            android:id="@+id/tvSpeedValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0 MB/s"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_primary_strong"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="match_parent" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:orientation="vertical"
+                        android:background="@drawable/panel_item_bg"
+                        android:padding="14dp">
+
+                        <TextView
+                            android:id="@+id/tvSyncMode"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="同步状态：-"
+                            android:textSize="12sp"
+                            android:textColor="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvSyncProgress"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="上传进度: 0/0 (0%)"
+                            android:textSize="12sp"
+                            android:textColor="@color/text_secondary"
+                            android:layout_marginTop="4dp" />
+
+                        <TextView
+                            android:id="@+id/tvSyncSpeed"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="当前: -"
+                            android:textSize="12sp"
+                            android:textColor="@color/text_tertiary"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

@@ -70,10 +70,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val btnPrimaryBlue by lazy {
-        ColorStateList.valueOf(android.graphics.Color.parseColor("#2563EB"))
+        ColorStateList.valueOf(ContextCompat.getColor(this, R.color.brand_primary))
     }
     private val btnStopRed by lazy {
-        ColorStateList.valueOf(android.graphics.Color.parseColor("#EF4444"))
+        ColorStateList.valueOf(ContextCompat.getColor(this, R.color.danger))
     }
 
     // 二维码扫描结果回调
@@ -214,13 +214,44 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnSyncFull.setOnClickListener {
-            onSyncModeButtonClicked(SYNC_MODE_FULL)
+            // 同步中：右侧按钮作为“停止同步”；空闲时：作为“全量同步”启动
+            if (isUiBusy()) {
+                onStopButtonClicked()
+            } else {
+                onSyncModeButtonClicked(SYNC_MODE_FULL)
+            }
         }
 
         updateSyncButtons()
         
         // 获取电脑 IP 地址
         fetchAndDisplayPcIp()
+    }
+
+    private fun isUiBusy(): Boolean {
+        val localSyncing = SyncService.isSyncing
+        val localPending = !localSyncing && (localPendingMode == SYNC_MODE_FULL || localPendingMode == SYNC_MODE_INCREMENTAL)
+        val remoteBusy = isRemoteBusyWithoutLocalSync()
+        return localSyncing || remoteBusy || localPending
+    }
+
+    private fun onStopButtonClicked() {
+        if (remotePhase == "stopping") {
+            Toast.makeText(this, "正在停止，请稍候...", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 本地同步或本地 pending：直接停止
+        if (SyncService.isSyncing || (!SyncService.isSyncing && (localPendingMode == SYNC_MODE_FULL || localPendingMode == SYNC_MODE_INCREMENTAL))) {
+            stopSync()
+            return
+        }
+
+        // 仅远端在跑：请求远端停止
+        if (isRemoteBusyWithoutLocalSync()) {
+            requestRemoteStopOrCancel()
+            return
+        }
     }
 
     private fun isNightActive(): Boolean {
@@ -317,32 +348,43 @@ class MainActivity : AppCompatActivity() {
             else -> null
         }
 
-        val incActive = syncing && inferredMode == SYNC_MODE_INCREMENTAL
-        val fullActive = syncing && inferredMode == SYNC_MODE_FULL
         val stopping = remotePhase == "stopping"
 
-        binding.btnSyncIncremental.text = when {
-            stopping && incActive -> "停止中..."
-            fullActive -> "当前：全量"
-            incActive -> "停止同步"
-            else -> "增量同步"
+        // 与截图一致：左侧固定显示“当前：增量/全量”（同步中不可点）；右侧固定为“停止同步”（同步中可点）
+        if (syncing) {
+            val modeLabel = if (inferredMode == SYNC_MODE_FULL) "全量" else "增量"
+            binding.btnSyncIncremental.text = "当前：$modeLabel"
+            binding.btnSyncFull.text = if (stopping) "停止中..." else "停止同步"
+
+            binding.btnSyncIncremental.isEnabled = false
+            binding.btnSyncFull.isEnabled = !stopping
+
+            binding.btnSyncIncremental.backgroundTintList = btnPrimaryBlue
+            binding.btnSyncFull.backgroundTintList = btnStopRed
+
+            val primaryText = ContextCompat.getColor(this, R.color.brand_on_primary)
+            val stopText = ContextCompat.getColor(this, R.color.danger_on)
+            binding.btnSyncIncremental.setTextColor(primaryText)
+            binding.btnSyncFull.setTextColor(stopText)
+        } else {
+            binding.btnSyncIncremental.text = "增量同步"
+            binding.btnSyncFull.text = "全量同步"
+
+            binding.btnSyncIncremental.isEnabled = canStart
+            binding.btnSyncFull.isEnabled = canStart
+
+            binding.btnSyncIncremental.backgroundTintList = btnPrimaryBlue
+            binding.btnSyncFull.backgroundTintList = btnPrimaryBlue
+
+            val primaryText = ContextCompat.getColor(this, R.color.brand_on_primary)
+            binding.btnSyncIncremental.setTextColor(primaryText)
+            binding.btnSyncFull.setTextColor(primaryText)
         }
-        binding.btnSyncFull.text = when {
-            stopping && fullActive -> "停止中..."
-            incActive -> "当前：增量"
-            fullActive -> "停止同步"
-            else -> "全量同步"
-        }
+    }
 
-        binding.btnSyncIncremental.isEnabled = if (syncing) (incActive && !stopping) else canStart
-        binding.btnSyncFull.isEnabled = if (syncing) (fullActive && !stopping) else canStart
-
-        binding.btnSyncIncremental.backgroundTintList = if (incActive) btnStopRed else btnPrimaryBlue
-        binding.btnSyncFull.backgroundTintList = if (fullActive) btnStopRed else btnPrimaryBlue
-
-        val white = ContextCompat.getColor(this, android.R.color.white)
-        binding.btnSyncIncremental.setTextColor(white)
-        binding.btnSyncFull.setTextColor(white)
+    private fun formatSpeedMb(speedMb: Double): String {
+        val v = speedMb.coerceAtLeast(0.0)
+        return String.format("%.1f MB/s", v)
     }
 
     private fun normalizeMode(raw: String?): String {
@@ -412,15 +454,19 @@ class MainActivity : AppCompatActivity() {
         val skipped = (status["skipped"] as? Number)?.toInt() ?: 0
         val failed = (status["failed"] as? Number)?.toInt() ?: 0
         val done = synced + skipped + failed
+        val speed = (status["speed"] as? Number)?.toDouble() ?: 0.0
+
+        binding.tvSpeedValue.text = formatSpeedMb(speed)
 
         if (isRemoteBusyWithoutLocalSync()) {
             localPendingMode = null
             binding.progressSync.visibility = View.VISIBLE
             binding.tvSyncMode.text = "同步状态：$modeText"
+            val pct = if (needSync > 0) (done * 100) / needSync else 0
             binding.tvSyncProgress.text = if (needSync > 0) {
-                "上传进度: $done/$needSync"
+                "上传进度: $done/$needSync ($pct%)"
             } else {
-                "上传进度: 0/0"
+                "上传进度: 0/0 (0%)"
             }
             binding.tvSyncSpeed.text = "当前: ${if (currentText.isNotEmpty()) currentText else "正在准备..."}"
         } else if (remotePhase == "done") {
@@ -428,6 +474,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvSyncMode.text = "同步状态：-"
             binding.tvSyncProgress.text = "上传已完成"
             binding.tvSyncSpeed.text = if (currentText.isNotEmpty()) "当前: $currentText" else ""
+            binding.tvSpeedValue.text = formatSpeedMb(0.0)
         }
 
         updateSyncButtons()
@@ -450,6 +497,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvSyncMode.text = "同步状态：-"
             binding.tvSyncProgress.text = "上传已停止"
             binding.tvSyncSpeed.text = "当前: -"
+            binding.tvSpeedValue.text = formatSpeedMb(0.0)
         }
     }
 
@@ -730,6 +778,9 @@ class MainActivity : AppCompatActivity() {
                 // 第二行：当前文件
                 binding.tvSyncSpeed.text = "当前: ${progress.currentFile}"
 
+                // 速度卡
+                binding.tvSpeedValue.text = formatSpeedMb(progress.speed)
+
                 // 实时保存同步进度
                 saveSyncStats(progress.synced, progress.total)
             }
@@ -746,6 +797,7 @@ class MainActivity : AppCompatActivity() {
                     binding.tvSyncMode.text = "同步状态：-"
                     binding.tvSyncProgress.text = "上传已完成"
                     binding.tvSyncSpeed.text = ""
+                    binding.tvSpeedValue.text = formatSpeedMb(0.0)
                 }
             }
         }

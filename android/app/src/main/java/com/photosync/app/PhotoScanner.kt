@@ -23,38 +23,123 @@ data class PhotoInfo(
 
 class PhotoScanner(private val context: Context) {
 
+    private data class ProgressState(
+        val total: Int,
+        var scanned: Int = 0,
+        var lastReported: Int = 0,
+    )
+
+    private fun maybeReportProgress(state: ProgressState, onProgress: ((Int, Int) -> Unit)?) {
+        if (onProgress == null) return
+        val scanned = state.scanned
+        val total = state.total
+        if (total <= 0) return
+        if (scanned <= 1 || scanned == total || scanned - state.lastReported >= 500) {
+            state.lastReported = scanned
+            onProgress(scanned, total)
+        }
+    }
+
     /**
      * 扫描所有照片和视频
      */
-    fun scanAll(): List<PhotoInfo> {
+    fun scanAll(onProgress: ((scanned: Int, total: Int) -> Unit)? = null): List<PhotoInfo> {
         val photos = mutableListOf<PhotoInfo>()
-        photos.addAll(scanMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, isImage = true))
-        photos.addAll(scanMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, isImage = false))
+
+        val imageCount = queryCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        val videoCount = queryCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+        val total = imageCount + videoCount
+        val state = ProgressState(total = total)
+
+        photos.addAll(
+            scanMedia(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                isImage = true,
+                progressState = state,
+                onProgress = onProgress,
+            )
+        )
+        photos.addAll(
+            scanMedia(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                isImage = false,
+                progressState = state,
+                onProgress = onProgress,
+            )
+        )
         return photos.sortedByDescending { it.dateTaken }
     }
 
     /**
      * 增量扫描：仅返回给定时间戳之后新增/更新的媒体
      */
-    fun scanSince(sinceMillis: Long): List<PhotoInfo> {
+    fun scanSince(
+        sinceMillis: Long,
+        onProgress: ((scanned: Int, total: Int) -> Unit)? = null,
+    ): List<PhotoInfo> {
         if (sinceMillis <= 0L) {
-            return scanAll()
+            return scanAll(onProgress)
         }
+
+        // 兼容不同设备字段行为：同时使用 DATE_TAKEN(毫秒) 和 DATE_ADDED(秒)
+        val sinceSec = sinceMillis / 1000L
+        val selection = "(${MediaStore.MediaColumns.DATE_TAKEN} >= ?) OR (${MediaStore.MediaColumns.DATE_ADDED} >= ?)"
+        val selectionArgs = arrayOf(sinceMillis.toString(), sinceSec.toString())
+
+        val imageCount = queryCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, selection, selectionArgs)
+        val videoCount = queryCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, selection, selectionArgs)
+        val total = imageCount + videoCount
+        val state = ProgressState(total = total)
+
         val photos = mutableListOf<PhotoInfo>()
-        photos.addAll(scanMedia(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            isImage = true,
-            sinceMillis = sinceMillis
-        ))
-        photos.addAll(scanMedia(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            isImage = false,
-            sinceMillis = sinceMillis
-        ))
+        photos.addAll(
+            scanMedia(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                isImage = true,
+                sinceMillis = sinceMillis,
+                progressState = state,
+                onProgress = onProgress,
+            )
+        )
+        photos.addAll(
+            scanMedia(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                isImage = false,
+                sinceMillis = sinceMillis,
+                progressState = state,
+                onProgress = onProgress,
+            )
+        )
         return photos.sortedByDescending { it.dateTaken }
     }
 
-    private fun scanMedia(contentUri: Uri, isImage: Boolean, sinceMillis: Long? = null): List<PhotoInfo> {
+    private fun queryCount(
+        contentUri: Uri,
+        selection: String? = null,
+        selectionArgs: Array<String>? = null,
+    ): Int {
+        return try {
+            context.contentResolver.query(
+                contentUri,
+                arrayOf(MediaStore.MediaColumns._ID),
+                selection,
+                selectionArgs,
+                null,
+            )?.use { cursor ->
+                cursor.count
+            } ?: 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    private fun scanMedia(
+        contentUri: Uri,
+        isImage: Boolean,
+        sinceMillis: Long? = null,
+        progressState: ProgressState? = null,
+        onProgress: ((scanned: Int, total: Int) -> Unit)? = null,
+    ): List<PhotoInfo> {
         val photos = mutableListOf<PhotoInfo>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -106,6 +191,11 @@ class PhotoScanner(private val context: Context) {
                         bucketName = cursor.getString(bucketCol) ?: ""
                     )
                 )
+
+                if (progressState != null) {
+                    progressState.scanned += 1
+                    maybeReportProgress(progressState, onProgress)
+                }
             }
         }
         return photos

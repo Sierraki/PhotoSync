@@ -157,7 +157,7 @@ class SyncService : Service() {
                 log("服务器连接成功 (${if (mode == ConnectionMode.USB) "USB" else "WiFi"})")
                 log("电脑端已同步: $pcSyncedCount 个文件")
 
-                // 2) 扫描相册（优先增量，仅在明确条件下全量）
+                // 2) 扫描相册（增量/全量严格区分：增量只处理新增；全量做对账补齐）
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val lastScanTs = prefs.getLong(KEY_LAST_SCAN_TS, 0L)
                 val currentServerId = "${mode.name}|${serverIp.trim()}|${client.serverPort}"
@@ -174,10 +174,10 @@ class SyncService : Service() {
                     previousStoragePath != serverStoragePath
                 val shouldBootstrapIncremental =
                     syncMode != "full" && lastScanTs <= 0L && pcSyncedCount > 0
-                val forceFullScan =
+                // 是否走“全量对账流程”（全量请求一定走；首次同步 PC 为空时增量与全量等价，也走全量）
+                val useFullFlow =
                     syncMode == "full" ||
-                    serverChanged || storagePathChanged || (lastScanTs <= 0L && !shouldBootstrapIncremental) ||
-                    pcTotalDropped
+                    (syncMode != "full" && lastScanTs <= 0L && pcSyncedCount <= 0)
 
                 if (syncMode == "full") {
                     log("已选择全量同步模式，本次将全量扫描")
@@ -186,10 +186,10 @@ class SyncService : Service() {
                 }
 
                 if (serverChanged) {
-                    log("检测到服务器目标变化，切换为全量扫描")
+                    log("检测到服务器目标变化：增量模式可能无法补齐历史缺口，建议使用全量同步")
                 }
                 if (storagePathChanged) {
-                    log("检测到电脑端存储路径已变更，切换为全量扫描")
+                    log("检测到电脑端存储路径已变更：增量模式可能无法补齐历史缺口，建议使用全量同步")
                 }
                 if (hasLegacyCursorOnly) {
                     log("检测到旧版本扫描游标，自动补齐服务器上下文并继续增量")
@@ -209,66 +209,86 @@ class SyncService : Service() {
                         .apply()
                 }
                 if (pcTotalDropped) {
-                    log("检测到电脑端索引数量回退（可能已刷新数据库），切换为全量扫描")
+                    log("检测到电脑端索引数量回退（可能已刷新数据库）：增量模式可能无法补齐历史缺口，建议使用全量同步")
                 }
 
                 var phoneLibraryTotal = 0
-                val allPhotos = if (!forceFullScan) {
-                    log("正在增量扫描手机相册...")
-                    val incremental = scanner.scanSince(lastScanTs)
-                    if (incremental.isEmpty()) {
-                        val fullSnapshot = scanner.scanAll()
-                        phoneLibraryTotal = fullSnapshot.size
-                        if (fullSnapshot.isEmpty()) {
-                            log("增量扫描结果为空，本次无需同步")
-                            incremental
+                val deviceName = android.os.Build.MODEL
+                var lastScanLogAt = 0
+                var lastScanNotifyAt = 0
+                val reportScanProgress: (Int, Int) -> Unit = { scanned, total ->
+                    if (total > 0) {
+                        phoneLibraryTotal = total
+                    }
+                    if (scanned <= 1 || scanned == total || scanned - lastScanNotifyAt >= 500) {
+                        lastScanNotifyAt = scanned
+                        client.notifyScanProgress(deviceName, scanned, maxOf(total, 0), syncMode)
+                    }
+                    if (scanned <= 1 || scanned == total || scanned - lastScanLogAt >= 1000) {
+                        lastScanLogAt = scanned
+                        if (total > 0) {
+                            log("扫描进度: $scanned/$total")
                         } else {
-                            log("增量为空，开始与电脑数据库比对手机清单...")
-                            val batchSize = 500
-                            val needSync = mutableListOf<PhotoInfo>()
-                            for (batchStart in fullSnapshot.indices step batchSize) {
-                                val batch = fullSnapshot.subList(
-                                    batchStart,
-                                    minOf(batchStart + batchSize, fullSnapshot.size)
+                            log("扫描进度: $scanned")
+                        }
+                    }
+                }
+                val allPhotos = if (!useFullFlow) {
+                    // 增量：只扫描新增/更新，不做全量对账（保证很快）
+                    log("正在增量扫描手机相册...")
+                    val incremental = scanner.scanSince(lastScanTs, reportScanProgress)
+                    // 增量模式下总量展示用上次缓存兜底
+                    phoneLibraryTotal = maxOf(phoneLibraryTotal, maxOf(prefs.getInt("last_phone_total", 0), incremental.size))
+                    if (incremental.isEmpty()) {
+                        log("增量扫描无变化，本次无需同步")
+                    } else {
+                        log("增量扫描发现 ${incremental.size} 个新增/更新文件")
+                    }
+                    incremental
+                } else {
+                    // 全量：先扫描全库，再与电脑端数据库对账，只上传电脑端缺的（更严谨）
+                    log("正在全量扫描手机相册...")
+                    val fullSnapshot = scanner.scanAll(reportScanProgress)
+                    phoneLibraryTotal = maxOf(phoneLibraryTotal, fullSnapshot.size)
+                    log("手机端发现 ${fullSnapshot.size} 个文件")
+
+                    if (fullSnapshot.isEmpty()) {
+                        emptyList()
+                    } else {
+                        log("开始与电脑数据库比对手机清单（全量对账）...")
+                        val batchSize = 500
+                        val needSync = mutableListOf<PhotoInfo>()
+                        for (batchStart in fullSnapshot.indices step batchSize) {
+                            val batch = fullSnapshot.subList(
+                                batchStart,
+                                minOf(batchStart + batchSize, fullSnapshot.size)
+                            )
+                            val manifest = batch.map { p ->
+                                mapOf(
+                                    "album" to (p.bucketName.ifBlank { "unsorted" }),
+                                    "filename" to p.displayName,
+                                    "size" to p.size,
                                 )
-                                val manifest = batch.map { p ->
-                                    mapOf(
-                                        "album" to (p.bucketName.ifBlank { "unsorted" }),
-                                        "filename" to p.displayName,
-                                        "size" to p.size,
-                                    )
-                                }
+                            }
 
-                                val compareResult = client.checkManifest(manifest)
-                                if (compareResult.isFailure) {
-                                    log("清单比对失败，回退全量补齐: ${compareResult.exceptionOrNull()?.message}")
-                                    needSync.clear()
-                                    needSync.addAll(fullSnapshot)
-                                    break
-                                }
+                            val compareResult = client.checkManifest(manifest)
+                            if (compareResult.isFailure) {
+                                log("清单比对失败，回退为直接上传补齐: ${compareResult.exceptionOrNull()?.message}")
+                                needSync.clear()
+                                needSync.addAll(fullSnapshot)
+                                break
+                            }
 
-                                val existsMap = compareResult.getOrNull().orEmpty()
-                                for (photo in batch) {
-                                    val key = "${photo.bucketName.ifBlank { "unsorted" }}|${photo.displayName}|${photo.size}"
-                                    if (existsMap[key] != true) {
-                                        needSync.add(photo)
-                                    }
+                            val existsMap = compareResult.getOrNull().orEmpty()
+                            for (photo in batch) {
+                                val key = "${photo.bucketName.ifBlank { "unsorted" }}|${photo.displayName}|${photo.size}"
+                                if (existsMap[key] != true) {
+                                    needSync.add(photo)
                                 }
                             }
-                            log("数据库比对完成：手机总数=$phoneLibraryTotal，需补齐=${needSync.size}")
-                            needSync
                         }
-                    } else {
-                        // 增量模式下为电脑端统计补充总量展示
-                        phoneLibraryTotal = maxOf(incremental.size, prefs.getInt("last_phone_total", 0))
-                        log("增量扫描发现 ${incremental.size} 个新增/更新文件")
-                        incremental
-                    }
-                } else {
-                    log("正在全量扫描手机相册（首次同步）...")
-                    scanner.scanAll().also {
-                        phoneLibraryTotal = it.size
-                        log("手机端发现 ${it.size} 个文件")
+                        log("数据库比对完成：手机总数=$phoneLibraryTotal，需补齐=${needSync.size}")
+                        needSync
                     }
                 }
 
@@ -293,20 +313,9 @@ class SyncService : Service() {
 
                 // 3) 使用电脑端校验：手机端不再预先计算 MD5，直接上传由服务端最终判重
                 log("已启用电脑端校验：跳过手机端 MD5 预计算")
-                val batchSize = 100
-                val deviceName = android.os.Build.MODEL
-
-                for (batchStart in allPhotos.indices step batchSize) {
-                    if (!isSyncing) break
-                    if (client.checkStopRequest()) {
-                        log("收到电脑端停止请求，正在停止同步...")
-                        isSyncing = false
-                        break
-                    }
-                    val scanned = minOf(batchStart + batchSize, allPhotos.size)
-                    client.notifyScanProgress(deviceName, scanned, phoneLibraryTotal, syncMode)
-                    log("已扫描 $scanned / ${allPhotos.size}...")
-                }
+                // 扫描阶段的实时进度已由 PhotoScanner 回调上报，这里只做一次收敛更新即可。
+                client.notifyScanProgress(deviceName, allPhotos.size, phoneLibraryTotal, syncMode)
+                log("扫描完成：候选=${allPhotos.size}，总量=${phoneLibraryTotal}")
 
                 if (!isSyncing) {
                     client.notifySyncStop("手机端已停止同步")

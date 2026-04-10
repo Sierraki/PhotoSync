@@ -502,28 +502,66 @@ def get_photos_dir() -> Path:
     return config.storage_path
 
 
-def is_in_album_synced(album: str, hash_value: str) -> bool:
-    """检查相册内是否已有该哈希，并验证文件真实存在。"""
+def normalize_album_subdir(album: str) -> str:
+    """将客户端/ADB 推断的相册名规范化为相对目录。
+
+    说明：
+    - 统一 WiFi 上传与 ADB 拉取的相册命名口径
+    - 防止路径穿越（".."、绝对路径等）
+    """
+    raw = (album or "").replace("\\", "/").strip()
+    sub_dir = raw.strip("/")
+    if not sub_dir:
+        return "unsorted"
+    if ".." in sub_dir or sub_dir.startswith("/"):
+        return "unsorted"
+    return sub_dir
+
+
+def get_existing_filename_in_album(album: str, hash_value: str) -> Optional[str]:
+    """若该相册内已存在该哈希且磁盘文件真实存在，返回电脑端已存在的文件名；否则返回 None。
+
+    注意：
+    - 若数据库有记录但磁盘文件已丢失，会自动清理该索引，避免后续误判“已存在”。
+    """
     if not hash_value or not db.has_in_album(album, hash_value):
-        return False
+        return None
 
     with db.lock:
         with db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT filename FROM files WHERE album = ? AND sha256 = ?",
-                (album, hash_value)
+                (album, hash_value),
             )
             row = cursor.fetchone()
-            if row:
-                filename = row[0]
-                file_path = get_photos_dir() / album / filename
-                if file_path.exists():
-                    return True
-                db.remove_from_album(album, hash_value)
-                print(f"[验证] 文件不存在已清理: {album}/{filename}")
+            if not row:
+                return None
 
-    return False
+            filename = row[0]
+            file_path = get_photos_dir() / album / filename
+            if file_path.exists():
+                return filename
+
+            db.remove_from_album(album, hash_value)
+            print(f"[验证] 文件不存在已清理: {album}/{filename}")
+            return None
+
+
+def is_in_album_synced(album: str, hash_value: str) -> bool:
+    """检查相册内是否已有该哈希，并验证文件真实存在。"""
+    return get_existing_filename_in_album(album, hash_value) is not None
+
+
+def format_skip_entry(album: str, incoming_filename: str, existing_filename: Optional[str]) -> str:
+    album_part = (album or "unsorted").strip() or "unsorted"
+    incoming = (incoming_filename or "").strip()
+    existing = (existing_filename or "").strip()
+    if not incoming:
+        return album_part
+    if not existing or existing == incoming:
+        return f"{album_part}/{incoming}"
+    return f"{album_part}/{incoming} (已存在: {existing})"
 
 
 def normalize_client_hashes(raw_hash: str) -> list[str]:
@@ -823,19 +861,21 @@ def _run_adb_sync(serial: str, device_name: str):
         if not file_hash:
             continue
 
-        # 从路径提取相册名
+        # 从路径提取相册名（并统一规范化口径）
         parts = remote_path.split("/")
         album = "unsorted"
         for j, part in enumerate(parts):
             if part in ("DCIM", "Pictures") and j + 1 < len(parts):
                 album = parts[j + 1]
                 break
+        album = normalize_album_subdir(album)
 
-        # 相册内去重检查
-        if is_in_album_synced(album, file_hash):
+        # 相册内去重检查（必须磁盘真实存在）
+        existing_name = get_existing_filename_in_album(album, file_hash)
+        if existing_name:
             skipped += 1
             adb_sync_status["skipped"] = skipped
-            _add_current_sync_skipped(f"{album}/{filename}")
+            _add_current_sync_skipped(format_skip_entry(album, filename, existing_name))
         else:
             need_sync_files.append((remote_path, album))
             need_sync_hash[remote_path] = file_hash
@@ -872,11 +912,12 @@ def _run_adb_sync(serial: str, device_name: str):
                 _adb_sync_log(f"哈希计算失败: {filename}")
                 continue
 
-        # 相册内去重再次检查
-        if is_in_album_synced(album, file_hash):
+        # 相册内去重再次检查（必须磁盘真实存在）
+        existing_name = get_existing_filename_in_album(album, file_hash)
+        if existing_name:
             with adb_status_lock:
                 adb_sync_status["skipped"] = adb_sync_status.get("skipped", 0) + 1
-            _add_current_sync_skipped(f"{album}/{filename}")
+            _add_current_sync_skipped(format_skip_entry(album, filename, existing_name))
             continue
 
         save_dir = photos_dir / album
@@ -1677,7 +1718,7 @@ async def check_manifest(items: list[dict]):
                     continue
 
                 cursor.execute(
-                    "SELECT filename, size FROM files WHERE album = ? AND filename = ? LIMIT 1",
+                    "SELECT sha256, filename, size FROM files WHERE album = ? AND filename = ? LIMIT 1",
                     (album, filename),
                 )
                 row = cursor.fetchone()
@@ -1685,8 +1726,18 @@ async def check_manifest(items: list[dict]):
                     results[key] = False
                     continue
 
-                db_size = int(row[1] or 0)
-                # 以文件名 + 文件大小为准做存在性判断，避免仅按数量误判
+                db_sha256 = row[0]
+                db_filename = row[1]
+                db_size = int(row[2] or 0)
+
+                # 统一“已存在”口径：必须磁盘文件真实存在 + 文件大小一致
+                file_path = get_photos_dir() / album / db_filename
+                if not file_path.exists():
+                    if db_sha256:
+                        db.remove_from_album(album, db_sha256)
+                    results[key] = False
+                    continue
+
                 results[key] = (db_size == size)
 
     return results
@@ -2189,10 +2240,7 @@ async def upload_photo(
     global upload_stats, upload_last_print, recent_synced_photos
     try:
         photos_dir = get_photos_dir()
-        if album:
-            sub_dir = album.replace("\\", "/").strip("/")
-        else:
-            sub_dir = "unsorted"
+        sub_dir = normalize_album_subdir(album)
 
         save_dir = photos_dir / sub_dir
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -2208,10 +2256,11 @@ async def upload_photo(
         # 客户端哈希只用于电脑端预检查，最终仍以电脑端实算 SHA-256 为准
         candidate_hashes = normalize_client_hashes(file_hash)
         for h in candidate_hashes:
-            if is_in_album_synced(sub_dir, h):
+            existing_name = get_existing_filename_in_album(sub_dir, h)
+            if existing_name:
                 upload_stats["total"] += 1
                 upload_stats["skipped"] += 1
-                _add_current_sync_skipped(f"{sub_dir}/{safe_name}")
+                _add_current_sync_skipped(format_skip_entry(sub_dir, safe_name, existing_name))
                 return {"status": "skipped", "message": "相册内已存在相同文件"}
 
         # 确定保存路径
@@ -2263,11 +2312,12 @@ async def upload_photo(
             print(f"[上传] 客户端哈希与服务端 SHA-256 不同，已按服务端结果处理: {safe_name}")
 
         # 再次检查去重（防止并发冲突）
-        if is_in_album_synced(sub_dir, final_hash):
+        existing_name = get_existing_filename_in_album(sub_dir, final_hash)
+        if existing_name:
             save_path.unlink()  # 删除重复文件
             upload_stats["total"] += 1
             upload_stats["skipped"] += 1
-            _add_current_sync_skipped(f"{sub_dir}/{filename}")
+            _add_current_sync_skipped(format_skip_entry(sub_dir, filename, existing_name))
             return {"status": "skipped", "message": "相册内已存在相同文件"}
 
         # ─── 阶段4: 原子性地更新数据库 ───

@@ -524,12 +524,12 @@ async function loadStatus() {
 // ─── 照片列表 ──────────────────────────────────
 async function loadPhotos() {
     try {
-        const data = await fetchJSON("/api/photos?per_page=200");
+        const data = await fetchJSON("/api/skipped?per_page=200");
         document.getElementById("photo-count").textContent = data.total;
         const grid = document.getElementById("photo-grid");
 
         if (data.total === 0) {
-            grid.innerHTML = `<div class="empty-state"><p>暂无同步的照片</p><p class="hint">通过手机 App 开始同步</p></div>`;
+            grid.innerHTML = `<div class="empty-state"><p>暂无跳过的照片</p><p class="hint">仅显示本次同步产生的跳过</p></div>`;
             return;
         }
         grid.innerHTML = data.photos.map(photo => {

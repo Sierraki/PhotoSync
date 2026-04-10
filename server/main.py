@@ -716,6 +716,26 @@ def _wifi_is_active_locked(status: dict) -> bool:
 recent_synced_photos = []
 recent_photos_lock = threading.Lock()
 
+# 本次同步跳过的照片列表（用于前端展示，最多保留 2000 条）
+current_sync_skipped_photos = []
+current_sync_skipped_lock = threading.Lock()
+
+
+def _reset_current_sync_skipped():
+    global current_sync_skipped_photos
+    with current_sync_skipped_lock:
+        current_sync_skipped_photos = []
+
+
+def _add_current_sync_skipped(photo_path: str):
+    p = (photo_path or "").strip()
+    if not p:
+        return
+    with current_sync_skipped_lock:
+        current_sync_skipped_photos.append(p)
+        if len(current_sync_skipped_photos) > 2000:
+            current_sync_skipped_photos.pop(0)
+
 PHONE_PHOTO_DIRS = [
     "/sdcard/DCIM/Camera",
     "/sdcard/DCIM",
@@ -884,6 +904,7 @@ def _run_adb_sync(serial: str, device_name: str):
         if is_in_album_synced(album, file_hash):
             skipped += 1
             adb_sync_status["skipped"] = skipped
+            _add_current_sync_skipped(f"{album}/{filename}")
         else:
             need_sync_files.append((remote_path, album))
             need_sync_hash[remote_path] = file_hash
@@ -922,6 +943,9 @@ def _run_adb_sync(serial: str, device_name: str):
 
         # 相册内去重再次检查
         if is_in_album_synced(album, file_hash):
+            with adb_status_lock:
+                adb_sync_status["skipped"] = adb_sync_status.get("skipped", 0) + 1
+            _add_current_sync_skipped(f"{album}/{filename}")
             continue
 
         save_dir = photos_dir / album
@@ -1493,6 +1517,7 @@ def reset_stats():
     upload_stats = {"total": 0, "skipped": 0, "success": 0}
     upload_last_print = 0
     recent_synced_photos = []  # 清空本次同步的照片列表
+    _reset_current_sync_skipped()  # 清空本次同步跳过的照片列表
     print()  # 换行，开始新的同步
 
 
@@ -2166,17 +2191,18 @@ async def upload_photo(
         if ".." in sub_dir or sub_dir.startswith("/"):
             return {"status": "error", "message": "非法的相册名"}
 
+        safe_name = sanitize_filename(original_name)
+        if not safe_name:
+            return {"status": "error", "message": "非法文件名"}
+
         # 客户端哈希只用于电脑端预检查，最终仍以电脑端实算 SHA-256 为准
         candidate_hashes = normalize_client_hashes(file_hash)
         for h in candidate_hashes:
             if is_in_album_synced(sub_dir, h):
                 upload_stats["total"] += 1
                 upload_stats["skipped"] += 1
+                _add_current_sync_skipped(f"{sub_dir}/{safe_name}")
                 return {"status": "skipped", "message": "相册内已存在相同文件"}
-
-        safe_name = sanitize_filename(original_name)
-        if not safe_name:
-            return {"status": "error", "message": "非法文件名"}
 
         # 确定保存路径
         save_path = save_dir / safe_name
@@ -2231,6 +2257,7 @@ async def upload_photo(
             save_path.unlink()  # 删除重复文件
             upload_stats["total"] += 1
             upload_stats["skipped"] += 1
+            _add_current_sync_skipped(f"{sub_dir}/{filename}")
             return {"status": "skipped", "message": "相册内已存在相同文件"}
 
         # ─── 阶段4: 原子性地更新数据库 ───
@@ -2324,6 +2351,54 @@ async def list_photos(page: int = 1, per_page: int = 50):
     }
 
 
+@app.get("/api/skipped")
+async def list_skipped(page: int = 1, per_page: int = 200):
+    """列出本次同步跳过的照片（相册内已存在/去重跳过）。"""
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(per_page or 200)
+    except (TypeError, ValueError):
+        per_page = 200
+
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 1
+    if per_page > 500:
+        per_page = 500
+
+    with current_sync_skipped_lock:
+        items = list(current_sync_skipped_photos)
+
+    # 最近的放前面
+    items.reverse()
+
+    total = len(items)
+    start_idx = (page - 1) * per_page
+    page_items = items[start_idx:start_idx + per_page]
+
+    photos = []
+    for p in page_items:
+        name = Path(p).name
+        photos.append({
+            "filename": p,
+            "name": name,
+            "size": 0,
+            "url": "",
+        })
+
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page if total > 0 else 0,
+        "photos": photos,
+    }
+
+
 @app.get("/api/photo/{path:path}")
 async def get_photo(path: str):
     """按相对路径获取照片"""
@@ -2353,6 +2428,9 @@ async def adb_sync_start(serial: str = Form(default="")):
     devices = get_adb_devices(include_emulators=False)
     if not devices:
         return {"status": "error", "message": "未检测到真机设备（模拟器已过滤）"}
+
+    # 新的一次 ADB 同步开始前，清空“本次同步跳过列表”
+    _reset_current_sync_skipped()
 
     device = None
     if serial:

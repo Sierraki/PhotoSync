@@ -1,12 +1,6 @@
 name: Android Auto Release (APK)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'android/**'
-      - '.github/workflows/android-auto-release.yml'
   workflow_dispatch:
     inputs:
       force_publish:

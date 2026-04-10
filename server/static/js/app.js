@@ -10,11 +10,7 @@ let localWifiSyncLogs = [];
 let lastPhoneConnected = false;
 let preferredConnType = "wifi";
 let userSelectedConnType = false;
-// 说明：ADB 既可作为“连接方式/端口转发”（手机端同步），也可走“PC 端 ADB 拉取同步”。
-
-let activeAdbSyncRunning = false;
-let activeAdbSyncPhase = "";
-let activeAdbSyncMode = ""; // 仅用于按钮 UI：incremental/full（ADB 实际无此区分）
+// 说明：同步触发逻辑统一以“手机端扫描/上传”为准（ADB 仅作为连接方式/端口转发）。
 
 const STOPPING_UI_TIMEOUT_MS = 4000;
 const WIFI_STATUS_ERROR_RESET_THRESHOLD = 3;
@@ -249,9 +245,6 @@ function updateSyncActionButtons() {
 
     maybeRecoverFromStaleWifiStopping();
 
-    const btnWifi = document.getElementById("btn-wifi");
-    const btnAdb = document.getElementById("btn-adb");
-    const connType = btnAdb?.classList.contains("btn-success") ? "adb" : "wifi";
 
     btnInc.classList.remove("btn-stop");
     btnFull.classList.remove("btn-stop");
@@ -259,29 +252,6 @@ function updateSyncActionButtons() {
     btnFull.textContent = "全量同步";
     btnInc.disabled = false;
     btnFull.disabled = false;
-
-    if (connType === "adb") {
-        const hasAdbPendingOrRunning =
-            activeAdbSyncRunning ||
-            activeAdbSyncPhase === "scanning" ||
-            activeAdbSyncPhase === "syncing" ||
-            activeAdbSyncPhase === "stopping";
-        if (!hasAdbPendingOrRunning) return;
-
-        const mode = activeAdbSyncMode === "full" ? "full" : "incremental";
-        if (mode === "full") {
-            btnFull.textContent = "停止同步";
-            btnFull.classList.add("btn-stop");
-            btnInc.disabled = true;
-            btnInc.textContent = "当前：全量";
-        } else {
-            btnInc.textContent = "停止同步";
-            btnInc.classList.add("btn-stop");
-            btnFull.disabled = true;
-            btnFull.textContent = "当前：增量";
-        }
-        return;
-    }
 
     const hasPendingOrRunning =
         activeWifiSyncPhase === "requested" ||
@@ -376,11 +346,6 @@ async function requestSync(mode = "incremental") {
     const btnInc = document.getElementById("btn-sync-incremental");
     const btnFull = document.getElementById("btn-sync-full");
 
-    if (connType === "adb") {
-        await requestAdbSync(normalizedMode);
-        return;
-    }
-
     // 当前模式已处于请求中/同步中，再点则尝试停止（请求中可取消）
     if (activeWifiSyncMode === normalizedMode &&
         (activeWifiSyncPhase === "requested" || activeWifiSyncPhase === "scanning" || activeWifiSyncPhase === "syncing" || activeWifiSyncPhase === "preparing_full" || activeWifiSyncPhase === "stopping")) {
@@ -432,60 +397,6 @@ async function requestSync(mode = "incremental") {
         }
     } catch (e) {
         addWifiSyncLogMessage("请求失败: " + e.message);
-    } finally {
-        updateSyncActionButtons();
-    }
-}
-
-async function requestAdbSync(mode = "incremental") {
-    const normalizedMode = mode === "full" ? "full" : "incremental";
-    const btnInc = document.getElementById("btn-sync-incremental");
-    const btnFull = document.getElementById("btn-sync-full");
-
-    const deviceSerial = document.getElementById("adb-device-select")?.value || selectedDeviceSerial || "";
-    if (!deviceSerial) {
-        alert("请先选择设备");
-        return;
-    }
-
-    // 运行态再次点击 = 停止
-    if (activeAdbSyncRunning || activeAdbSyncPhase === "scanning" || activeAdbSyncPhase === "syncing") {
-        try {
-            const data = await fetchJSON("/api/adb/stop", { method: "POST" });
-            addWifiSyncLogMessage((data && (data.message || data.msg)) || "已发送停止请求");
-        } catch (e) {
-            addWifiSyncLogMessage("停止失败: " + e.message);
-        }
-        activeAdbSyncPhase = "stopping";
-        updateSyncActionButtons();
-        return;
-    }
-
-    btnInc.disabled = true;
-    btnFull.disabled = true;
-    if (normalizedMode === "full") {
-        btnFull.textContent = "启动同步...";
-    } else {
-        btnInc.textContent = "启动同步...";
-    }
-
-    try {
-        activeAdbSyncMode = normalizedMode;
-        const deviceLabel = deviceSerial;
-        const data = await fetchJSON("/api/adb/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ serial: deviceSerial, device: deviceLabel })
-        });
-        if (data && data.ok) {
-            activeAdbSyncRunning = true;
-            activeAdbSyncPhase = "scanning";
-            addWifiSyncLogMessage("已启动 ADB 拉取同步");
-        } else {
-            addWifiSyncLogMessage((data && (data.msg || data.message)) || "启动失败");
-        }
-    } catch (e) {
-        addWifiSyncLogMessage("启动失败: " + e.message);
     } finally {
         updateSyncActionButtons();
     }
@@ -932,15 +843,12 @@ async function pollSyncStatus() {
             resetWifiSyncUiState();
         }
 
-        // ADB 同步状态（PC 拉取）
-        const adbStatus = (adbResp && adbResp.ok && adbResp.status) ? adbResp.status : null;
-        activeAdbSyncRunning = Boolean(adbStatus && adbStatus.running);
-        activeAdbSyncPhase = (adbStatus && adbStatus.phase) ? adbStatus.phase : "";
-
         updateSyncActionButtons();
 
-        // 同步日志面板：ADB 拉取同步运行时优先展示 ADB 日志；否则展示手机端上报日志。
-        if (preferredConnType === "adb" && adbStatus && (adbStatus.running || adbStatus.phase)) {
+        const adbStatus = (adbResp && adbResp.ok && adbResp.status) ? adbResp.status : null;
+
+        // 同步日志面板：默认展示手机端上报日志；仅当 PC 端 ADB 拉取同步确实在跑时，展示其日志。
+        if (adbStatus && adbStatus.running) {
             renderWifiSyncLog(adbStatus.log || []);
         } else {
             const logs = (wifiStatus.phone_log || wifiStatus.log || []);
@@ -962,7 +870,8 @@ async function pollSyncStatus() {
 
         const wifiLinkType = preferredConnType === "adb" ? "ADB" : "WiFi";
 
-        if (preferredConnType === "adb" && adbStatus && (adbStatus.running || adbStatus.phase)) {
+        // 只有当 PC 端 ADB 拉取同步在跑时，才用其状态覆盖面板；否则统一展示手机端同步状态。
+        if (adbStatus && adbStatus.running) {
             s = adbStatus;
             isRunning = Boolean(adbStatus.running);
             syncSource = "ADB";

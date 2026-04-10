@@ -10,8 +10,11 @@ let localWifiSyncLogs = [];
 let lastPhoneConnected = false;
 let preferredConnType = "wifi";
 let userSelectedConnType = false;
+// 说明：ADB 既可作为“连接方式/端口转发”（手机端同步），也可走“PC 端 ADB 拉取同步”。
+
 let activeAdbSyncRunning = false;
-let activeAdbSyncMode = "";
+let activeAdbSyncPhase = "";
+let activeAdbSyncMode = ""; // 仅用于按钮 UI：incremental/full（ADB 实际无此区分）
 
 const STOPPING_UI_TIMEOUT_MS = 4000;
 const WIFI_STATUS_ERROR_RESET_THRESHOLD = 3;
@@ -148,7 +151,7 @@ async function loadConnectionStatus() {
             // 更新本次同步计数
             document.getElementById("sync-count").textContent = data.synced || 0;
         } else if (!data.running && data.phase !== "syncing") {
-            recentListEl.innerHTML = '<div class="empty-state"><p class="hint">同步开始后显示</p></div>';
+            recentListEl.innerHTML = '<div class="empty-state"><p>暂无同步的照片</p><p class="hint">同步开始后显示</p></div>';
             document.getElementById("sync-count").textContent = "0";
         }
     } catch (e) {
@@ -246,6 +249,10 @@ function updateSyncActionButtons() {
 
     maybeRecoverFromStaleWifiStopping();
 
+    const btnWifi = document.getElementById("btn-wifi");
+    const btnAdb = document.getElementById("btn-adb");
+    const connType = btnAdb?.classList.contains("btn-success") ? "adb" : "wifi";
+
     btnInc.classList.remove("btn-stop");
     btnFull.classList.remove("btn-stop");
     btnInc.textContent = "增量同步";
@@ -253,8 +260,14 @@ function updateSyncActionButtons() {
     btnInc.disabled = false;
     btnFull.disabled = false;
 
-    // ADB 同步运行时：按钮进入“停止”态（与 WiFi 状态机独立）。
-    if (activeAdbSyncRunning) {
+    if (connType === "adb") {
+        const hasAdbPendingOrRunning =
+            activeAdbSyncRunning ||
+            activeAdbSyncPhase === "scanning" ||
+            activeAdbSyncPhase === "syncing" ||
+            activeAdbSyncPhase === "stopping";
+        if (!hasAdbPendingOrRunning) return;
+
         const mode = activeAdbSyncMode === "full" ? "full" : "incremental";
         if (mode === "full") {
             btnFull.textContent = "停止同步";
@@ -363,47 +376,8 @@ async function requestSync(mode = "incremental") {
     const btnInc = document.getElementById("btn-sync-incremental");
     const btnFull = document.getElementById("btn-sync-full");
 
-    // ADB 模式：走 USB 同步接口（不再误发 WiFi 同步请求）。
     if (connType === "adb") {
-        try {
-            const adbStatus = await fetchJSON("/api/adb/status");
-            if (adbStatus && adbStatus.running) {
-                const stopData = await fetchJSON("/api/adb/stop", { method: "POST" });
-                addWifiSyncLogMessage(stopData.message || "已发送停止请求");
-                return;
-            }
-        } catch {
-            // ignore status errors
-        }
-
-        btnInc.disabled = true;
-        btnFull.disabled = true;
-        if (normalizedMode === "full") {
-            btnFull.textContent = "准备全量...";
-        } else {
-            btnInc.textContent = "发送请求...";
-        }
-
-        try {
-            const fd = new FormData();
-            if (selectedDeviceSerial) {
-                fd.append("serial", selectedDeviceSerial);
-            }
-            const adbData = await fetchJSON("/api/adb/sync", { method: "POST", body: fd });
-
-            if (adbData.status === "ok") {
-                activeAdbSyncRunning = true;
-                activeAdbSyncMode = normalizedMode;
-                updateSyncActionButtons();
-                addWifiSyncLogMessage(adbData.message || "已开始 ADB 同步");
-            } else {
-                addWifiSyncLogMessage(adbData.message || "ADB 同步请求失败");
-            }
-        } catch (e) {
-            addWifiSyncLogMessage("ADB 同步请求失败: " + e.message);
-        } finally {
-            updateSyncActionButtons();
-        }
+        await requestAdbSync(normalizedMode);
         return;
     }
 
@@ -458,6 +432,60 @@ async function requestSync(mode = "incremental") {
         }
     } catch (e) {
         addWifiSyncLogMessage("请求失败: " + e.message);
+    } finally {
+        updateSyncActionButtons();
+    }
+}
+
+async function requestAdbSync(mode = "incremental") {
+    const normalizedMode = mode === "full" ? "full" : "incremental";
+    const btnInc = document.getElementById("btn-sync-incremental");
+    const btnFull = document.getElementById("btn-sync-full");
+
+    const deviceSerial = document.getElementById("adb-device-select")?.value || selectedDeviceSerial || "";
+    if (!deviceSerial) {
+        alert("请先选择设备");
+        return;
+    }
+
+    // 运行态再次点击 = 停止
+    if (activeAdbSyncRunning || activeAdbSyncPhase === "scanning" || activeAdbSyncPhase === "syncing") {
+        try {
+            const data = await fetchJSON("/api/adb/stop", { method: "POST" });
+            addWifiSyncLogMessage((data && (data.message || data.msg)) || "已发送停止请求");
+        } catch (e) {
+            addWifiSyncLogMessage("停止失败: " + e.message);
+        }
+        activeAdbSyncPhase = "stopping";
+        updateSyncActionButtons();
+        return;
+    }
+
+    btnInc.disabled = true;
+    btnFull.disabled = true;
+    if (normalizedMode === "full") {
+        btnFull.textContent = "启动同步...";
+    } else {
+        btnInc.textContent = "启动同步...";
+    }
+
+    try {
+        activeAdbSyncMode = normalizedMode;
+        const deviceLabel = deviceSerial;
+        const data = await fetchJSON("/api/adb/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ serial: deviceSerial, device: deviceLabel })
+        });
+        if (data && data.ok) {
+            activeAdbSyncRunning = true;
+            activeAdbSyncPhase = "scanning";
+            addWifiSyncLogMessage("已启动 ADB 拉取同步");
+        } else {
+            addWifiSyncLogMessage((data && (data.msg || data.message)) || "启动失败");
+        }
+    } catch (e) {
+        addWifiSyncLogMessage("启动失败: " + e.message);
     } finally {
         updateSyncActionButtons();
     }
@@ -525,18 +553,26 @@ async function loadStatus() {
 async function loadPhotos() {
     try {
         const data = await fetchJSON("/api/skipped?per_page=200");
-        document.getElementById("photo-count").textContent = data.total;
+        const total = Number(data?.total || 0) || 0;
+        document.getElementById("photo-count").textContent = String(total);
         const grid = document.getElementById("photo-grid");
 
-        if (data.total === 0) {
+        if (total === 0) {
             grid.innerHTML = `<div class="empty-state"><p>暂无跳过的照片</p><p class="hint">仅显示本次同步产生的跳过</p></div>`;
             return;
         }
-        grid.innerHTML = data.photos.map(photo => {
+        const photos = Array.isArray(data?.photos) ? data.photos : [];
+        grid.innerHTML = photos.map(photo => {
             return `<div class="photo-item"><div class="photo-name" title="${photo.name}">${photo.name}</div></div>`;
         }).join("");
     } catch (e) {
         console.error("加载照片失败:", e);
+        const grid = document.getElementById("photo-grid");
+        if (grid) {
+            grid.innerHTML = `<div class="empty-state"><p>暂无跳过的照片</p><p class="hint">仅显示本次同步产生的跳过</p></div>`;
+        }
+        const badge = document.getElementById("photo-count");
+        if (badge) badge.textContent = "0";
     }
 }
 
@@ -871,14 +907,16 @@ function startSyncPoll() {
 
 async function pollSyncStatus() {
     try {
-        const [wifiStatus, adbStatus, serverStatus, refreshStatus] = await Promise.all([
-            fetchJSON("/api/wifi/status"),
-            fetchJSON("/api/adb/status"),
-            fetchJSON("/api/status"),
-            fetchJSON("/api/settings/scan-status")
-        ]);
+        const adbStatusPromise = (preferredConnType === "adb")
+            ? fetchJSON("/api/adb/status").catch(() => null)
+            : Promise.resolve(null);
 
-        activeAdbSyncRunning = Boolean(adbStatus && adbStatus.running);
+        const [wifiStatus, serverStatus, refreshStatus, adbResp] = await Promise.all([
+            fetchJSON("/api/wifi/status"),
+            fetchJSON("/api/status"),
+            fetchJSON("/api/settings/scan-status"),
+            adbStatusPromise,
+        ]);
 
         wifiStatusErrorStreak = 0;
 
@@ -894,8 +932,20 @@ async function pollSyncStatus() {
             resetWifiSyncUiState();
         }
 
+        // ADB 同步状态（PC 拉取）
+        const adbStatus = (adbResp && adbResp.ok && adbResp.status) ? adbResp.status : null;
+        activeAdbSyncRunning = Boolean(adbStatus && adbStatus.running);
+        activeAdbSyncPhase = (adbStatus && adbStatus.phase) ? adbStatus.phase : "";
+
         updateSyncActionButtons();
-        renderWifiSyncLog(wifiStatus.phone_log || wifiStatus.log || []);
+
+        // 同步日志面板：ADB 拉取同步运行时优先展示 ADB 日志；否则展示手机端上报日志。
+        if (preferredConnType === "adb" && adbStatus && (adbStatus.running || adbStatus.phase)) {
+            renderWifiSyncLog(adbStatus.log || []);
+        } else {
+            const logs = (wifiStatus.phone_log || wifiStatus.log || []);
+            renderWifiSyncLog(logs);
+        }
 
         // 始终更新电脑端照片数量
         document.getElementById("sync-pc-total").textContent = serverStatus.total_synced || 0;
@@ -912,9 +962,9 @@ async function pollSyncStatus() {
 
         const wifiLinkType = preferredConnType === "adb" ? "ADB" : "WiFi";
 
-        if (adbStatus && adbStatus.running) {
+        if (preferredConnType === "adb" && adbStatus && (adbStatus.running || adbStatus.phase)) {
             s = adbStatus;
-            isRunning = true;
+            isRunning = Boolean(adbStatus.running);
             syncSource = "ADB";
         } else if (wifiStatus.phase === "preparing_full") {
             s = {
@@ -934,11 +984,6 @@ async function pollSyncStatus() {
             s = wifiStatus;
             isRunning = false;
             syncSource = wifiLinkType;
-        } else if (adbStatus && adbStatus.phase === "done" && adbStatus.phone_total > 0) {
-            // ADB 同步刚完成，显示最终结果
-            s = adbStatus;
-            isRunning = false;
-            syncSource = "ADB";
         } else if (wifiStatus.phase === "done" && wifiStatus.phone_total > 0) {
             // WiFi 同步刚完成，显示最终结果
             s = wifiStatus;
@@ -970,19 +1015,22 @@ async function pollSyncStatus() {
                 } else if (v > 0) {
                     return (v * 1024).toFixed(0) + " KB/s";
                 }
-                if (!running) return "--";
-                return done > 0 ? "0 KB/s" : "等待首个文件...";
+                return "0";
             }
 
             // 更新同步统计数据
-            document.getElementById("sync-scanned").textContent = s.phone_total || 0;
-            document.getElementById("sync-need-sync").textContent = s.phone_total || 0;
+            const phoneTotal = Number(s.phone_total || 0) || 0;
+            const needSyncCount = (syncSource === "ADB")
+                ? (Number(s.need_sync || 0) || 0)
+                : phoneTotal;
+            document.getElementById("sync-scanned").textContent = String(phoneTotal);
+            document.getElementById("sync-need-sync").textContent = String(needSyncCount);
             document.getElementById("sync-synced").textContent = s.synced || 0;
             const done = (s.synced || 0) + (s.skipped || 0) + (s.failed || 0);
             document.getElementById("sync-speed").textContent = formatSpeed(s.speed, isRunning, done);
 
             // 进度条
-            const needSync = s.need_sync || 1;
+            const needSync = (Number(s.need_sync || 0) || 0) || 1;
             const pct = needSync > 0 ? Math.round(done * 100 / needSync) : (s.need_sync === 0 ? 100 : 0);
             document.getElementById("sync-progress-bar").style.width = pct + "%";
 
@@ -1006,11 +1054,11 @@ async function pollSyncStatus() {
             syncDot.className = "dot gray";
             syncStatusText.textContent = "等待同步...";
             syncProgressArea.style.display = "none";
-            document.getElementById("sync-scanned").textContent = "-";
-            document.getElementById("sync-need-sync").textContent = "-";
-            document.getElementById("sync-synced").textContent = "-";
+            document.getElementById("sync-scanned").textContent = "0";
+            document.getElementById("sync-need-sync").textContent = "0";
+            document.getElementById("sync-synced").textContent = "0";
             document.getElementById("sync-mode").textContent = "-";
-            document.getElementById("sync-speed").textContent = "--";
+            document.getElementById("sync-speed").textContent = "0";
         }
     } catch (e) {
         console.error("轮询状态失败:", e);

@@ -20,7 +20,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager, contextmanager
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Body
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -559,7 +559,16 @@ def sanitize_filename(name: str) -> str:
 # ─── ADB 工具 ────────────────────────────────────────────
 def _run_adb(*args, timeout=10) -> subprocess.CompletedProcess:
     cmd = [config.adb_executable] + list(args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # Windows 默认控制台编码可能是 GBK，adb 输出常为 UTF-8，直接 text=True 会导致解码异常崩线程。
+    # 这里强制 UTF-8 并允许替换非法字节，避免同步线程因为日志输出而中断。
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
 
 
 def check_adb() -> bool:
@@ -574,7 +583,8 @@ def get_adb_devices(include_emulators: bool = False) -> list[dict]:
     try:
         result = _run_adb("devices", "-l", timeout=5)
         devices = []
-        for line in result.stdout.strip().split("\n")[1:]:
+        stdout = (result.stdout or "")
+        for line in stdout.strip().split("\n")[1:]:
             if "\tdevice" not in line and " device " not in line:
                 continue
             parts = line.split()
@@ -586,7 +596,7 @@ def get_adb_devices(include_emulators: bool = False) -> list[dict]:
             if not model:
                 try:
                     r = _run_adb("-s", serial, "shell", "getprop", "ro.product.model", timeout=5)
-                    model = r.stdout.strip()
+                    model = (r.stdout or "").strip()
                 except Exception:
                     model = serial
             is_emulator = (
@@ -652,6 +662,8 @@ def setup_adb_reverse(serial: Optional[str] = None) -> bool:
 
 
 # ─── ADB 直接拉取照片 ────────────────────────────────────
+# 说明：这条链路用于“PC 端直接通过 ADB 扫描/拉取手机照片”。
+# Web UI 默认可走手机端同步（/api/wifi/*）；但该链路保留用于无需手机 App 的场景。
 adb_sync_status = {
     "running": False,
     "phase": "",
@@ -670,6 +682,249 @@ adb_sync_status = {
     "log": [],
 }
 adb_status_lock = threading.Lock()
+
+PHONE_PHOTO_DIRS = [
+    "/sdcard/DCIM/Camera",
+    "/sdcard/DCIM",
+    "/sdcard/Pictures",
+    "/sdcard/Pictures/Screenshots",
+]
+
+
+def _adb_sync_log(msg: str):
+    with adb_status_lock:
+        adb_sync_status["log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+        if len(adb_sync_status["log"]) > 500:
+            adb_sync_status["log"] = adb_sync_status["log"][-300:]
+
+
+def _adb_list_files(serial: str, remote_dir: str) -> list[str]:
+    """列出手机目录中的文件"""
+    try:
+        result = _run_adb(
+            "-s", serial, "shell",
+            f"find {remote_dir} -maxdepth 3 -type f 2>/dev/null",
+            timeout=30)
+        files = []
+        stdout = (result.stdout or "")
+        for line in stdout.splitlines():
+            line = (line or "").strip()
+            if not line:
+                continue
+            ext = Path(line).suffix.lower()
+            if ext in PHOTO_EXTS:
+                files.append(line)
+        return files
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+
+
+def _adb_get_hash(serial: str, remote_path: str) -> str:
+    """获取手机文件的 SHA-256（使用 busybox sha256sum）
+
+    如果设备不支持 sha256sum，回退到 md5sum
+    在计算后自动转换为统一格式
+    """
+    try:
+        # 尝试使用 SHA-256
+        result = _run_adb("-s", serial, "shell", f"sha256sum '{remote_path}'", timeout=30)
+        stdout = (result.stdout or "").strip()
+        if result.returncode == 0 and stdout:
+            return stdout.split()[0]
+
+        # 回退到 MD5（兼容旧设备）
+        result = _run_adb("-s", serial, "shell", f"md5sum '{remote_path}'", timeout=30)
+        md5_stdout = (result.stdout or "").strip()
+        if result.returncode == 0 and md5_stdout:
+            md5_hash = md5_stdout.split()[0]
+            return f"md5:{md5_hash}"
+
+        return ""
+    except Exception:
+        return ""
+
+
+def _adb_pull_file(serial: str, remote_path: str, local_path: str) -> bool:
+    """从手机拉取文件到 PC"""
+    try:
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        result = _run_adb("-s", serial, "pull", remote_path, local_path, timeout=120)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _run_adb_sync(serial: str, device_name: str):
+    """在后台线程执行 ADB 同步（先扫描再同步）"""
+    global adb_sync_status
+
+    with adb_status_lock:
+        adb_sync_status.update({
+            "running": True,
+            "phase": "scanning",
+            "pc_total": 0,
+            "phone_total": 0,
+            "need_sync": 0,
+            "synced": 0,
+            "skipped": 0,
+            "failed": 0,
+            "current": "正在扫描手机...",
+            "device": device_name,
+            "start_time": None,
+            "speed": 0.0,
+            "bytes_sent": 0,
+            "eta": 0,
+            "log": [],
+        })
+
+    _adb_sync_log(f"开始同步设备: {device_name} ({serial})")
+    _adb_sync_log("正在扫描电脑端文件索引...")
+    photos_dir = get_photos_dir()
+
+    # ─── 阶段1: 扫描手机照片 ───
+    all_files: list[str] = []
+    for dir_path in PHONE_PHOTO_DIRS:
+        if not adb_sync_status["running"]:
+            break
+        _adb_sync_log(f"扫描: {dir_path}")
+        files = _adb_list_files(serial, dir_path)
+        all_files.extend(files)
+        _adb_sync_log(f"  发现 {len(files)} 个文件")
+
+    all_files = list(dict.fromkeys(all_files))  # 去重
+    adb_sync_status["phone_total"] = len(all_files)
+    _adb_sync_log(f"手机总数: {len(all_files)} 张，正在校验...")
+
+    if not all_files:
+        _adb_sync_log("未发现照片文件")
+        adb_sync_status["running"] = False
+        return
+
+    # 等待 PC 索引就绪
+    _adb_sync_log("等待电脑端文件索引就绪...")
+    pc_total = get_pc_hash_count()
+    adb_sync_status["pc_total"] = pc_total
+    _adb_sync_log(f"电脑端已有照片: {pc_total} 张")
+
+    # ─── 阶段2: 校验哪些需要同步（相册内去重） ───
+    need_sync_files: list[tuple[str, str]] = []
+    need_sync_hash: dict[str, str] = {}
+    skipped = 0
+
+    for i, remote_path in enumerate(all_files):
+        if not adb_sync_status["running"]:
+            _adb_sync_log("同步已取消")
+            return
+
+        filename = Path(remote_path).name
+        adb_sync_status["current"] = f"校验 ({i + 1}/{len(all_files)}): {filename}"
+
+        file_hash = _adb_get_hash(serial, remote_path)
+        if not file_hash:
+            continue
+
+        # 从路径提取相册名
+        parts = remote_path.split("/")
+        album = "unsorted"
+        for j, part in enumerate(parts):
+            if part in ("DCIM", "Pictures") and j + 1 < len(parts):
+                album = parts[j + 1]
+                break
+
+        # 相册内去重检查
+        if is_in_album_synced(album, file_hash):
+            skipped += 1
+            adb_sync_status["skipped"] = skipped
+            _add_current_sync_skipped(f"{album}/{filename}")
+        else:
+            need_sync_files.append((remote_path, album))
+            need_sync_hash[remote_path] = file_hash
+
+    adb_sync_status["need_sync"] = len(need_sync_files)
+    _adb_sync_log(f"校验完成！需同步: {len(need_sync_files)}，已存在: {skipped}")
+
+    if not need_sync_files:
+        _adb_sync_log("所有照片已同步完成，无需更新")
+        adb_sync_status["phase"] = "done"
+        adb_sync_status["current"] = "同步完成"
+        adb_sync_status["running"] = False
+        return
+
+    # ─── 阶段3: 同步文件 ───
+    adb_sync_status["phase"] = "syncing"
+    adb_sync_status["start_time"] = datetime.now().timestamp()
+    adb_sync_status["bytes_sent"] = 0
+    _adb_sync_log(f"开始同步 {len(need_sync_files)} 个文件...")
+
+    for remote_path, album in need_sync_files:
+        if not adb_sync_status["running"]:
+            _adb_sync_log("同步已取消")
+            break
+
+        filename = Path(remote_path).name
+        adb_sync_status["current"] = filename
+
+        file_hash = need_sync_hash.get(remote_path, "")
+        if not file_hash:
+            file_hash = _adb_get_hash(serial, remote_path)
+            if not file_hash:
+                adb_sync_status["failed"] += 1
+                _adb_sync_log(f"哈希计算失败: {filename}")
+                continue
+
+        # 相册内去重再次检查
+        if is_in_album_synced(album, file_hash):
+            with adb_status_lock:
+                adb_sync_status["skipped"] = adb_sync_status.get("skipped", 0) + 1
+            _add_current_sync_skipped(f"{album}/{filename}")
+            continue
+
+        save_dir = photos_dir / album
+        save_path = save_dir / filename
+        if save_path.exists():
+            stem = save_path.stem
+            suffix = save_path.suffix
+            counter = 1
+            while save_path.exists():
+                save_path = save_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        if _adb_pull_file(serial, remote_path, str(save_path)):
+            file_size = save_path.stat().st_size if save_path.exists() else 0
+            adb_sync_status["bytes_sent"] += file_size
+            add_to_album_index(album, file_hash, save_path.name, file_size)
+            adb_sync_status["synced"] += 1
+            adb_sync_status["pc_total"] = db.get_count()
+            _adb_sync_log(f"已同步: {album}/{filename}")
+        else:
+            adb_sync_status["failed"] += 1
+            _adb_sync_log(f"失败: {filename}")
+
+        # 计算速度和 ETA (MB/s)
+        start_time = adb_sync_status.get("start_time")
+        bytes_sent = adb_sync_status["bytes_sent"]
+        if start_time and bytes_sent > 0:
+            elapsed = datetime.now().timestamp() - start_time
+            if elapsed > 0:
+                speed_mb = (bytes_sent / 1024 / 1024) / elapsed
+                adb_sync_status["speed"] = round(speed_mb, 2)
+                remaining = len(need_sync_files) - \
+                    adb_sync_status["synced"] - adb_sync_status["failed"]
+                if speed_mb > 0:
+                    avg_bytes = bytes_sent / \
+                        adb_sync_status["synced"] if adb_sync_status["synced"] > 0 else 0
+                    remaining_bytes = avg_bytes * remaining
+                    adb_sync_status["eta"] = int(remaining_bytes / 1024 / 1024 / speed_mb)
+
+    db.set_last_scan(datetime.now().isoformat())
+    adb_sync_status["phase"] = "done"
+    adb_sync_status["current"] = "同步完成"
+    _adb_sync_log(
+        f"同步完成！电脑端: {adb_sync_status['pc_total']}，"
+        f"本次同步: {adb_sync_status['synced']}，"
+        f"失败: {adb_sync_status['failed']}"
+    )
+    adb_sync_status["running"] = False
 
 # ─── WiFi 同步状态（手机端上传时更新）─────────────────────
 wifi_sync_status = {
@@ -736,21 +991,6 @@ def _add_current_sync_skipped(photo_path: str):
         if len(current_sync_skipped_photos) > 2000:
             current_sync_skipped_photos.pop(0)
 
-PHONE_PHOTO_DIRS = [
-    "/sdcard/DCIM/Camera",
-    "/sdcard/DCIM",
-    "/sdcard/Pictures",
-    "/sdcard/Pictures/Screenshots",
-]
-
-
-def _adb_sync_log(msg: str):
-    with adb_status_lock:
-        adb_sync_status["log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
-        if len(adb_sync_status["log"]) > 500:
-            adb_sync_status["log"] = adb_sync_status["log"][-300:]
-
-
 def _wifi_sync_log(msg: str):
     with wifi_status_lock:
         log_list = wifi_sync_status.setdefault("log", [])
@@ -765,236 +1005,6 @@ def _wifi_phone_log(msg: str):
         log_list.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
         if len(log_list) > 500:
             wifi_sync_status["phone_log"] = log_list[-300:]
-
-
-def _adb_list_files(serial: str, remote_dir: str) -> list[str]:
-    """列出手机目录中的文件"""
-    try:
-        result = _run_adb(
-            "-s", serial, "shell",
-            f"find {remote_dir} -maxdepth 3 -type f 2>/dev/null",
-            timeout=30)
-        files = []
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            ext = Path(line).suffix.lower()
-            if ext in PHOTO_EXTS:
-                files.append(line)
-        return files
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return []
-
-
-def _adb_get_hash(serial: str, remote_path: str) -> str:
-    """获取手机文件的 SHA-256（使用 busybox sha256sum）
-
-    如果设备不支持 sha256sum，回退到 md5sum
-    在计算后自动转换为统一格式
-    """
-    try:
-        # 尝试使用 SHA-256
-        result = _run_adb("-s", serial, "shell", f"sha256sum '{remote_path}'", timeout=30)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().split()[0]
-
-        # 回退到 MD5（兼容旧设备）
-        result = _run_adb("-s", serial, "shell", f"md5sum '{remote_path}'", timeout=30)
-        if result.returncode == 0 and result.stdout.strip():
-            md5_hash = result.stdout.strip().split()[0]
-            # 转换为 md5: 前缀格式，便于后续识别迁移
-            return f"md5:{md5_hash}"
-
-        return ""
-    except Exception:
-        return ""
-
-
-def _adb_pull_file(serial: str, remote_path: str, local_path: str) -> bool:
-    """从手机拉取文件到 PC"""
-    try:
-        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-        result = _run_adb("-s", serial, "pull", remote_path, local_path, timeout=120)
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def _run_adb_sync(serial: str, device_name: str):
-    """在后台线程执行 ADB 同步（先扫描再同步）"""
-    global adb_sync_status
-
-    with adb_status_lock:
-        adb_sync_status.update({
-            "running": True,
-            "phase": "scanning",
-            "pc_total": 0,
-            "phone_total": 0,
-            "need_sync": 0,
-            "synced": 0,
-            "skipped": 0,
-            "failed": 0,
-            "current": "正在扫描手机...",
-            "device": device_name,
-            "start_time": None,
-            "speed": 0.0,
-            "bytes_sent": 0,
-            "eta": 0,
-            "log": [],
-        })
-
-    _adb_sync_log(f"开始同步设备: {device_name} ({serial})")
-    _adb_sync_log("正在扫描电脑端文件索引...")
-    photos_dir = get_photos_dir()
-
-    # ─── 阶段1: 扫描手机照片 ───
-    all_files = []
-    for dir_path in PHONE_PHOTO_DIRS:
-        if not adb_sync_status["running"]:
-            break
-        _adb_sync_log(f"扫描: {dir_path}")
-        files = _adb_list_files(serial, dir_path)
-        all_files.extend(files)
-        _adb_sync_log(f"  发现 {len(files)} 个文件")
-
-    all_files = list(dict.fromkeys(all_files))  # 去重
-    adb_sync_status["phone_total"] = len(all_files)
-    _adb_sync_log(f"手机总数: {len(all_files)} 张，正在校验...")
-
-    if not all_files:
-        _adb_sync_log("未发现照片文件")
-        adb_sync_status["running"] = False
-        return
-
-    # 等待 PC 索引重建完成
-    _adb_sync_log("等待电脑端文件索引就绪...")
-    pc_total = get_pc_hash_count()
-    adb_sync_status["pc_total"] = pc_total
-    _adb_sync_log(f"电脑端已有照片: {pc_total} 张")
-
-    # ─── 阶段2: 校验哪些需要同步（相册内去重） ───
-    need_sync_files = []
-    need_sync_hash = {}
-    skipped = 0
-
-    for i, remote_path in enumerate(all_files):
-        if not adb_sync_status["running"]:
-            _adb_sync_log("同步已取消")
-            return
-
-        filename = Path(remote_path).name
-        adb_sync_status["current"] = f"校验 ({i + 1}/{len(all_files)}): {filename}"
-
-        file_hash = _adb_get_hash(serial, remote_path)
-        if not file_hash:
-            continue
-
-        # 从路径提取相册名
-        parts = remote_path.split("/")
-        album = "unsorted"
-        for j, part in enumerate(parts):
-            if part in ("DCIM", "Pictures") and j + 1 < len(parts):
-                album = parts[j + 1]
-                break
-        if album == "Camera":
-            album = "Camera"
-
-        # 相册内去重检查
-        if is_in_album_synced(album, file_hash):
-            skipped += 1
-            adb_sync_status["skipped"] = skipped
-            _add_current_sync_skipped(f"{album}/{filename}")
-        else:
-            need_sync_files.append((remote_path, album))
-            need_sync_hash[remote_path] = file_hash
-
-    adb_sync_status["need_sync"] = len(need_sync_files)
-    _adb_sync_log(f"校验完成！需同步: {len(need_sync_files)}，已存在: {skipped}")
-
-    if not need_sync_files:
-        _adb_sync_log("所有照片已同步完成，无需更新")
-        adb_sync_status["phase"] = "done"
-        adb_sync_status["current"] = "同步完成"
-        adb_sync_status["running"] = False
-        return
-
-    # ─── 阶段3: 同步文件 ───
-    adb_sync_status["phase"] = "syncing"
-    adb_sync_status["start_time"] = datetime.now().timestamp()
-    adb_sync_status["bytes_sent"] = 0
-    _adb_sync_log(f"开始同步 {len(need_sync_files)} 个文件...")
-
-    for remote_path, album in need_sync_files:
-        if not adb_sync_status["running"]:
-            _adb_sync_log("同步已取消")
-            break
-
-        filename = Path(remote_path).name
-        adb_sync_status["current"] = filename
-
-        file_hash = need_sync_hash.get(remote_path, "")
-        if not file_hash:
-            file_hash = _adb_get_hash(serial, remote_path)
-            if not file_hash:
-                adb_sync_status["failed"] += 1
-                _adb_sync_log(f"哈希计算失败: {filename}")
-                continue
-
-        # 相册内去重再次检查
-        if is_in_album_synced(album, file_hash):
-            with adb_status_lock:
-                adb_sync_status["skipped"] = adb_sync_status.get("skipped", 0) + 1
-            _add_current_sync_skipped(f"{album}/{filename}")
-            continue
-
-        save_dir = photos_dir / album
-        save_path = save_dir / filename
-        if save_path.exists():
-            stem = save_path.stem
-            suffix = save_path.suffix
-            counter = 1
-            while save_path.exists():
-                save_path = save_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
-
-        if _adb_pull_file(serial, remote_path, str(save_path)):
-            # 获取文件大小
-            file_size = save_path.stat().st_size if save_path.exists() else 0
-            adb_sync_status["bytes_sent"] += file_size
-            add_to_album_index(album, file_hash, save_path.name, file_size)
-            adb_sync_status["synced"] += 1
-            adb_sync_status["pc_total"] = db.get_count()
-            _adb_sync_log(f"已同步: {album}/{filename}")
-        else:
-            adb_sync_status["failed"] += 1
-            _adb_sync_log(f"失败: {filename}")
-
-        # 计算速度和ETA (MB/s)
-        start_time = adb_sync_status.get("start_time")
-        bytes_sent = adb_sync_status["bytes_sent"]
-        if start_time and bytes_sent > 0:
-            elapsed = datetime.now().timestamp() - start_time
-            if elapsed > 0:
-                speed_mb = (bytes_sent / 1024 / 1024) / elapsed
-                adb_sync_status["speed"] = round(speed_mb, 2)
-                remaining = len(need_sync_files) - \
-                    adb_sync_status["synced"] - adb_sync_status["failed"]
-                if speed_mb > 0:
-                    avg_bytes = bytes_sent / \
-                        adb_sync_status["synced"] if adb_sync_status["synced"] > 0 else 0
-                    remaining_bytes = avg_bytes * remaining
-                    adb_sync_status["eta"] = int(remaining_bytes / 1024 / 1024 / speed_mb)
-
-    db.set_last_scan(datetime.now().isoformat())
-    adb_sync_status["phase"] = "done"
-    adb_sync_status["current"] = "同步完成"
-    _adb_sync_log(
-        f"同步完成！电脑端: {adb_sync_status['pc_total']}，"
-        f"本次同步: {adb_sync_status['synced']}，"
-        f"失败: {adb_sync_status['failed']}"
-    )
-    adb_sync_status["running"] = False
 
 
 # ─── 文件夹选择器 ────────────────────────────────────────
@@ -2415,46 +2425,40 @@ async def get_photo(path: str):
     return FileResponse(str(photo_path))
 
 
-# ─── ADB 同步 API ────────────────────────────────────────
 @app.post("/api/adb/sync")
-async def adb_sync_start(serial: str = Form(default="")):
-    """启动 ADB USB 同步（先扫描再自动同步）"""
+async def adb_start_sync(body: dict = Body(...)):
+    """启动 PC 端 ADB 拉取同步"""
+    serial = (body or {}).get("serial", "").strip()
+    device_name = (body or {}).get("device", "").strip() or serial
+    if not serial:
+        raise HTTPException(status_code=400, detail="Missing serial")
+
     with adb_status_lock:
-        is_running = adb_sync_status["running"]
-    if is_running:
-        return {"status": "error", "message": "同步正在进行中"}
-    if not check_adb():
-        return {"status": "error", "message": "ADB 不可用"}
-    devices = get_adb_devices(include_emulators=False)
-    if not devices:
-        return {"status": "error", "message": "未检测到真机设备（模拟器已过滤）"}
+        if adb_sync_status.get("running"):
+            return {"ok": False, "msg": "ADB sync already running"}
+        adb_sync_status["running"] = True
+        adb_sync_status["device"] = device_name
 
-    # 新的一次 ADB 同步开始前，清空“本次同步跳过列表”
     _reset_current_sync_skipped()
+    threading.Thread(target=_run_adb_sync, args=(serial, device_name), daemon=True).start()
+    return {"ok": True}
 
-    device = None
-    if serial:
-        for d in devices:
-            if d["serial"] == serial:
-                device = d
-                break
-    if serial and device is None:
-        return {"status": "error", "message": f"未找到设备: {serial}"}
-    if device is None:
-        device = devices[0]
 
-    t = threading.Thread(
-        target=_run_adb_sync,
-        args=(device["serial"], device["model"]),
-        daemon=True,
-    )
-    t.start()
+@app.post("/api/adb/stop")
+async def adb_stop_sync():
+    """停止 PC 端 ADB 拉取同步"""
+    with adb_status_lock:
+        adb_sync_status["running"] = False
+        adb_sync_status["phase"] = "stopping"
+        adb_sync_status["current"] = "正在停止..."
+    return {"ok": True}
 
-    return {
-        "status": "ok",
-        "message": f"已开始同步: {device['model']} ({device['serial']})",
-        "device": device,
-    }
+
+@app.get("/api/adb/status")
+async def adb_get_sync_status():
+    """获取 PC 端 ADB 拉取同步状态"""
+    with adb_status_lock:
+        return {"ok": True, "status": dict(adb_sync_status)}
 
 
 @app.get("/api/adb/devices")
@@ -2464,21 +2468,6 @@ async def adb_list_devices(include_emulators: bool = False):
         return {"status": "error", "devices": [], "message": "ADB 不可用"}
     devices = get_adb_devices(include_emulators=include_emulators)
     return {"status": "ok", "devices": devices}
-
-
-@app.post("/api/adb/stop")
-async def adb_sync_stop():
-    """停止 ADB 同步"""
-    with adb_status_lock:
-        adb_sync_status["running"] = False
-    return {"status": "ok", "message": "正在停止同步"}
-
-
-@app.get("/api/adb/status")
-async def adb_sync_get_status():
-    """获取 ADB 同步进度"""
-    with adb_status_lock:
-        return dict(adb_sync_status)
 
 
 @app.post("/api/adb/setup-reverse")

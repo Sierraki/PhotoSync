@@ -1,6 +1,5 @@
 # PhotoSync
 
-
 一款跨平台的手机相册同步工具。支持通过 **局域网 (Wi-Fi)** 或 **ADB (有线)** 连接，将手机端的照片与视频高速同步至电脑端。
 
 [![img](https://img.shields.io/github/stars/Sierraki/PhotoSync?label=%E7%82%B9%E8%B5%9E)](https://github.com/Sierraki/PhotoSync)  [![img](https://img.shields.io/github/last-commit/Sierraki/PhotoSync?label=%E6%9C%80%E8%BF%91%E6%8F%90%E4%BA%A4)](https://github.com/Sierraki/PhotoSync)  [![img](https://img.shields.io/github/license/Sierraki/PhotoSync?label=%E8%AE%B8%E5%8F%AF%E8%AF%81)](https://github.com/Sierraki/PhotoSync/blob/main/LICENSE)  [![img](https://img.shields.io/github/release/Sierraki/PhotoSync?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Sierraki/PhotoSync/releases) ![GitHub Total Downloads](https://img.shields.io/github/downloads/Sierraki/PhotoSync/total?style=flat-square&color=blue)
@@ -19,15 +18,19 @@
 ## 🚀 部署过程
 
 ### 1. 环境准备
+
 在开始之前，请确保你的电脑已安装以下软件：
+
 * **Python**: 建议版本 3.8+。
 
 ### 2. 安装步骤
 
 #### 第一步：克隆项目
+
 ```bash
 git clone [https://github.com/Sierraki/PhotoSync.git](https://github.com/Sierraki/PhotoSync.git)
 ```
+
 #### 第二步：安装依赖
 
 ```bash
@@ -41,15 +44,19 @@ pip install -r requirements.txt
 确保手机已开启 USB 调试（仅 ADB 模式需要），并保持 App 处于运行状态。
 
 #### 第四步：启动程序
+
 ```bash
 python main.py
 ```
+
 #### 第五步：检查数据库
+
 ```
 在同步前，先设置好照片保存路径并且点击检查数据库，使数据库扫描一次建立索引，这是必须项，建立后以后都不用扫描了，除非电脑端的相册删除了部分照片
 ```
-# 手机端同步操作
+
 ### A 局域网链接
+
 ```
 设置路径：在浏览器界面中，首先设置好电脑端的照片存储路径。
 链接方式：可以把链接复制到手机的输入框上也可以直接扫码链接
@@ -57,18 +64,15 @@ python main.py
 开始同步：连接成功后，在手机上点击开始同步即可。
 ```
 
-
 ### B ADB链接(有线)
 
-``` 
+```
 基础设置：设置电脑端的照片存储路径。
-``` 
+```
 
- ``` 
+```
 准备连接：
 点击界面上的设置端口转发按钮。
 在手机上打开 USB 调试，并使用数据线连接电脑。
 开始同步：在手机 App 点击测试链接，成功后点击开始同步。
 ```
-# 电脑端遥控同步
-![alt text](Snipaste_2026-03-13_02-14-43.png)

@@ -137,6 +137,9 @@ header h1 {
     font-weight: 600;
     margin-bottom: 16px;
     color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 /* 连接面板 */
@@ -517,9 +520,16 @@ header h1 {
     color: #9ca3af;
 }
 
+.empty-state p {
+    margin: 0;
+    font-size: 13px;
+}
+
 .empty-state .hint {
     font-size: 13px;
     margin-top: 8px;
+    display: block;
+    text-align: center;
 }
 
 .pagination {

@@ -1,0 +1,13 @@
+# This repository publishes release artifacts only.
+*
+
+# Keep repository metadata.
+!.gitignore
+
+# Android release.
+!PhotoSync.apk
+
+# Windows release.
+!desktop/
+desktop/*
+!desktop/PhotoSyncServer.exe

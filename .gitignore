@@ -4,6 +4,10 @@
 # Keep repository metadata.
 !.gitignore
 
+# Keep docs and notes.
+!README.md
+
+
 # Android release.
 !PhotoSync.apk
 

@@ -27,59 +27,14 @@
 
 ---
 
-## 🚀 部署过程
 
 
 ## 🖥️ 桌面端一键启动
 
-PhotoSync 现已支持桌面端一键启动，无需额外配置 Python 环境！
-
-**推荐方式：**
-
-1. 进入 `desktop/PhotoSyncServer/` 目录。
+1. 进入 `desktop/output/` 目录。
 2. 双击 `PhotoSyncServer.exe`，即可直接启动服务器。
-3. 浏览器访问提示的本地地址，开始同步。
 
 
-
----
-
-## 🚀 部署过程（源码/开发者模式）
-
-如需源码运行或开发调试，请参考以下步骤：
-
-### 1. 环境准备
-
-在开始之前，请确保你的电脑已安装以下软件：
-
-* **Python**: 建议版本 3.8+。
-
-### 2. 安装步骤
-
-#### 第一步：克隆项目
-
-```bash
-git clone [https://github.com/Sierraki/PhotoSync.git](https://github.com/Sierraki/PhotoSync.git)
-```
-
-#### 第二步：安装依赖
-
-```bash
-cd server
-pip install -r requirements.txt
-```
-
-#### 第三步：手机端配置
-
-在仓库中找到 .apk 安装包并传输至手机完成安装。
-确保手机已开启 USB 调试（仅 ADB 模式需要），并保持 App 处于运行状态。
-
-#### 第四步：启动程序
-
-```bash
-cd server
-python main.py
-```
 
 
 

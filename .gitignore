@@ -1,17 +1,23 @@
-# This repository publishes release artifacts only.
+# Release-only repository: ignore every file by default.
 *
 
-# Keep repository metadata.
-!.gitignore
+# Allow Git to traverse directories while files remain ignored.
+!*/
+!**/
 
-# Keep docs and notes.
-!README.md
+# Repository metadata and documentation.
+!/.gitignore
+!/README.md
+!/desktop/README.md
+!/LICENSE
+!/LICENSE.*
+!/CHANGELOG.md
 
-
-# Android release.
+# Android release artifact.
 !PhotoSync.apk
 
-# Windows release.
-!desktop/
-desktop/*
-!desktop/PhotoSyncServer.exe
+# Images used by the release documentation.
+!image/**
+
+# Windows release artifact.
+!desktop/output/PhotoSync.exe
